@@ -3,6 +3,7 @@ import { ChatMessage } from "../conversation/types";
 import { convertChatMessageToGemini } from "./format-converter";
 import { ApiStream } from "./stream";
 import { GeminiModelId, ModelInfo, geminiDefaultModelId, geminiModels } from "./models";
+import { ChatHistory } from "../conversation/message-history";
 
 const GEMINI_DEFAULT_TEMPERATURE = 0;
 
@@ -18,14 +19,26 @@ export interface GeminiHandlerOptions {
  * Gemini APIを扱うハンドラークラス
  */
 export class GeminiHandler {
-  private client: GoogleGenerativeAI;
-  private options: GeminiHandlerOptions;
+  private readonly client: GoogleGenerativeAI;
+  private readonly options: {
+    apiKey: string;
+    modelId?: string;
+    baseUrl?: string;
+    temperature?: number;
+    maxTokens?: number;
+  };
 
   /**
    * コンストラクタ
    * @param options オプション
    */
-  constructor(options: GeminiHandlerOptions) {
+  constructor(options: {
+    apiKey: string;
+    modelId?: string;
+    baseUrl?: string;
+    temperature?: number;
+    maxTokens?: number;
+  }) {
     this.options = options;
     this.client = new GoogleGenerativeAI(options.apiKey);
   }
@@ -36,7 +49,14 @@ export class GeminiHandler {
    * @param messages メッセージ履歴
    * @returns ストリーム
    */
-  async *createMessage(systemPrompt: string, messages: ChatMessage[]): ApiStream {
+  async *createMessage(
+    systemPrompt: string,
+    messages: ChatMessage[]
+  ): AsyncGenerator<
+    { type: "text"; text: string } | { type: "usage"; inputTokens: number; outputTokens: number },
+    void,
+    unknown
+  > {
     const model = this.client.getGenerativeModel(
       {
         model: this.getModel().id,
@@ -71,15 +91,76 @@ export class GeminiHandler {
   }
 
   /**
-   * モデル情報を取得する
-   * @returns モデル情報
+   * メッセージを送信し、ストリーミングせずに応答を受け取る
+   * @param message メッセージ内容
+   * @param conversation 会話履歴（オプション）
+   * @returns 応答テキストと使用トークン情報
    */
-  getModel(): { id: GeminiModelId; info: ModelInfo } {
-    const modelId = this.options.modelId;
-    if (modelId && modelId in geminiModels) {
-      return { id: modelId, info: geminiModels[modelId] };
+  async sendMessage(
+    message: string,
+    conversation?: ChatHistory
+  ): Promise<{ text: string; usage: { input: number; output: number } }> {
+    // 会話履歴が指定されていない場合は新しく作成
+    const history = conversation || new ChatHistory();
+    
+    // 会話履歴にモデル情報を設定
+    const modelInfo = this.getModel().info;
+    history.setModelLimits(modelInfo.maxTokens, modelInfo.contextWindow);
+    
+    // 最後のメッセージが既にユーザーからのものでない場合、メッセージを追加
+    const messages = history.getMessages();
+    if (messages.length === 0 || messages[messages.length - 1].role !== "user") {
+      history.addMessage({
+        role: "user",
+        content: message,
+        ts: Date.now(),
+      });
     }
-    return { id: geminiDefaultModelId, info: geminiModels[geminiDefaultModelId] };
+    
+    // システムプロンプトなしでメッセージを送信
+    const systemPrompt = "";
+    
+    let fullResponse = "";
+    let inputTokens = 0;
+    let outputTokens = 0;
+    
+    for await (const chunk of this.createMessage(systemPrompt, history.getMessages())) {
+      if (chunk.type === "text") {
+        fullResponse += chunk.text;
+      } else if (chunk.type === "usage") {
+        inputTokens = chunk.inputTokens;
+        outputTokens = chunk.outputTokens;
+      }
+    }
+    
+    // 応答を会話履歴に追加
+    history.addMessage({
+      role: "assistant",
+      content: fullResponse,
+      ts: Date.now(),
+    });
+    
+    return {
+      text: fullResponse,
+      usage: {
+        input: inputTokens,
+        output: outputTokens,
+      },
+    };
+  }
+
+  /**
+   * 現在のモデル情報を取得
+   * @returns モデルID、情報を含むオブジェクト
+   */
+  getModel() {
+    const modelId = (this.options.modelId || geminiDefaultModelId) as GeminiModelId;
+    const modelInfo = geminiModels[modelId] || geminiModels[geminiDefaultModelId];
+    
+    return {
+      id: modelId,
+      info: modelInfo,
+    };
   }
 
   /**

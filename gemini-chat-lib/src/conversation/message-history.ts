@@ -1,4 +1,5 @@
 import { ChatMessage, ClineMessage } from "./types";
+import { truncateConversationIfNeeded } from "../utils/sliding-window";
 
 /**
  * 会話履歴を管理するクラス
@@ -61,6 +62,29 @@ export class MessageHistory {
  */
 export class ChatHistory {
   private messages: ChatMessage[] = [];
+  private modelMaxTokens: number = 8192;  // デフォルト値
+  private contextWindow: number = 131072; // デフォルト値
+
+  /**
+   * コンストラクタ
+   * @param options オプション
+   */
+  constructor(options?: { modelMaxTokens?: number; contextWindow?: number }) {
+    if (options) {
+      this.modelMaxTokens = options.modelMaxTokens || this.modelMaxTokens;
+      this.contextWindow = options.contextWindow || this.contextWindow;
+    }
+  }
+
+  /**
+   * モデルのトークン制限を設定する
+   * @param maxTokens 最大トークン数
+   * @param contextWindow コンテキストウィンドウサイズ
+   */
+  public setModelLimits(maxTokens: number, contextWindow: number): void {
+    this.modelMaxTokens = maxTokens;
+    this.contextWindow = contextWindow;
+  }
 
   /**
    * メッセージを追加する
@@ -72,6 +96,9 @@ export class ChatHistory {
       message.ts = Date.now();
     }
     this.messages.push(message);
+
+    // 会話履歴が長すぎる場合は自動で削減
+    this.autoTruncateIfNeeded();
   }
 
   /**
@@ -97,5 +124,28 @@ export class ChatHistory {
     if (index >= 0 && index < this.messages.length) {
       this.messages = this.messages.slice(0, index);
     }
+  }
+
+  /**
+   * 必要に応じて会話履歴を自動的に削減する
+   * @returns 削減されたかどうか
+   */
+  private autoTruncateIfNeeded(): boolean {
+    if (this.messages.length <= 1) {
+      return false;
+    }
+
+    const truncatedMessages = truncateConversationIfNeeded({
+      messages: this.messages,
+      modelMaxTokens: this.modelMaxTokens,
+      contextWindow: this.contextWindow,
+    });
+
+    if (truncatedMessages.length !== this.messages.length) {
+      this.messages = truncatedMessages;
+      return true;
+    }
+
+    return false;
   }
 } 

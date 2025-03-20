@@ -30,4 +30,36 @@ export {
   ApiStreamTextChunk, 
   ApiStreamUsageChunk, 
   ApiStreamReasoningChunk 
-} from "./gemini/stream"; 
+} from "./gemini/stream";
+
+// コンテキストとファイル処理
+export {
+  addLineNumbers,
+  extractTextFromFile,
+  truncateOutput,
+  readFile
+} from "./utils/file-utils";
+
+export { ContextHelper } from "./utils/context-helper";
+
+// Function calling ツール
+export {
+  FunctionTool,
+  ToolParams,
+  ToolResult,
+  ReadFileParams,
+  CodebaseSearchParams,
+  ListDirParams,
+  createTools,
+  createReadFileTool,
+  createCodebaseSearchTool,
+  createListDirTool
+} from "./utils/function-tools";
+
+// スライディングウィンドウ
+export {
+  truncateConversation,
+  truncateConversationIfNeeded,
+  estimateTokenCount,
+  TOKEN_BUFFER_PERCENTAGE
+} from "./utils/sliding-window"; 

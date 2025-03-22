@@ -50,10 +50,12 @@ export {
   ReadFileParams,
   CodebaseSearchParams,
   ListDirParams,
+  AskFollowupQuestionParams,
   createTools,
   createReadFileTool,
   createCodebaseSearchTool,
-  createListDirTool
+  createListDirTool,
+  createAskFollowupQuestionTool
 } from "./utils/function-tools";
 
 // スライディングウィンドウ

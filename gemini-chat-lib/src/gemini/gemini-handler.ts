@@ -349,4 +349,27 @@ export class GeminiHandler {
       ts: Date.now(),
     };
   }
+
+  /**
+   * フォローアップ質問を処理する
+   * この関数は、AIがask_followup_questionツールを使用した場合に呼び出される
+   * @param question ユーザーに尋ねる質問
+   * @param onAskFollowup フォローアップ質問をユーザーに提示し、回答を受け取るコールバック関数
+   * @returns ユーザーからの回答
+   */
+  async handleFollowupQuestion(
+    question: string,
+    onAskFollowup: (question: string) => Promise<string>
+  ): Promise<string> {
+    try {
+      // フォローアップ質問をユーザーに提示し、回答を取得
+      const answer = await onAskFollowup(question);
+      return answer;
+    } catch (error) {
+      if (error instanceof Error) {
+        throw new Error(`フォローアップ質問処理エラー: ${error.message}`);
+      }
+      throw error;
+    }
+  }
 } 

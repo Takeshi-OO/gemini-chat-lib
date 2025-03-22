@@ -186,6 +186,13 @@ export interface ListDirParams extends ToolParams {
 }
 
 /**
+ * フォローアップ質問ツールのパラメータ型
+ */
+export interface AskFollowupQuestionParams extends ToolParams {
+  question: string;
+}
+
+/**
  * ディレクトリ一覧ツール
  * @param workspaceRoot ワークスペースのルートパス
  * @returns ディレクトリ一覧ツール定義
@@ -237,6 +244,41 @@ export function createListDirTool(workspaceRoot: string): FunctionTool {
 }
 
 /**
+ * フォローアップ質問ツール
+ * @returns フォローアップ質問ツール定義
+ */
+export function createAskFollowupQuestionTool(): FunctionTool {
+  return {
+    name: 'ask_followup_question',
+    description: 'タスクを完了するために必要な追加情報を収集するためにユーザーに質問します。あいまいさがある場合や、明確化が必要な場合、または効果的に進めるためにより詳細な情報が必要な場合にこのツールを使用してください。',
+    parameters: {
+      properties: {
+        question: {
+          type: 'string',
+          description: 'ユーザーに尋ねる質問。必要な情報を明確に特定する、具体的な質問である必要があります。'
+        }
+      },
+      required: ['question']
+    },
+    execute: async (params: ToolParams): Promise<ToolResult> => {
+      try {
+        const askParams = params as AskFollowupQuestionParams;
+        
+        // ここでは質問を返すだけで、実際の応答処理はGeminiHandlerで行う
+        return { 
+          content: `<followup_question>${askParams.question}</followup_question>` 
+        };
+      } catch (error) {
+        return {
+          content: '',
+          error: `質問エラー: ${error instanceof Error ? error.message : String(error)}`
+        };
+      }
+    }
+  };
+}
+
+/**
  * ツールセットを作成する
  * @param workspaceRoot ワークスペースのルートパス
  * @returns ツールの配列
@@ -245,6 +287,7 @@ export function createTools(workspaceRoot: string): FunctionTool[] {
   return [
     createReadFileTool(workspaceRoot),
     createCodebaseSearchTool(workspaceRoot),
-    createListDirTool(workspaceRoot)
+    createListDirTool(workspaceRoot),
+    createAskFollowupQuestionTool()
   ];
 } 

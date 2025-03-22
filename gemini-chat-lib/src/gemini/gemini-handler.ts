@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, FunctionDeclarationSchema } from "@google/generative-ai";
+import { GoogleGenerativeAI, FunctionDeclarationSchema, FunctionCallingMode } from "@google/generative-ai";
 import { ChatMessage } from "../conversation/types";
 import { convertChatMessageToGemini } from "./format-converter";
 import { ApiStream } from "./stream";
@@ -199,6 +199,7 @@ export class GeminiHandler {
    * 関数呼び出しを含むメッセージを送信する
    * @param messages メッセージ履歴
    * @param functions 関数定義
+   * @param allowedFunctionNames 許可する関数名の配列（指定した場合、これらの関数のみが呼び出される）
    * @returns 応答
    */
   async sendMessageWithFunctions(
@@ -207,7 +208,8 @@ export class GeminiHandler {
       name: string;
       description?: string;
       parameters: Record<string, any>;
-    }>
+    }>,
+    allowedFunctionNames?: string[]
   ): Promise<ChatMessage> {
     try {
       const model = this.client.getGenerativeModel(
@@ -233,12 +235,28 @@ export class GeminiHandler {
         ],
       }));
 
+      // functionCallingConfigの設定
+      const functionCallingConfig: {
+        mode: typeof FunctionCallingMode.ANY;
+        allowed_function_names?: string[];
+      } = {
+        mode: FunctionCallingMode.ANY
+      };
+
+      // 許可された関数名が指定されている場合、設定に追加
+      if (allowedFunctionNames && allowedFunctionNames.length > 0) {
+        functionCallingConfig.allowed_function_names = allowedFunctionNames;
+      }
+
       const result = await model.generateContent({
         contents: messages.map((msg) => convertChatMessageToGemini(msg)),
         generationConfig: {
           temperature: this.options.temperature ?? GEMINI_DEFAULT_TEMPERATURE,
         },
         tools,
+        toolConfig: {
+          functionCallingConfig
+        }
       });
 
       const response = result.response;

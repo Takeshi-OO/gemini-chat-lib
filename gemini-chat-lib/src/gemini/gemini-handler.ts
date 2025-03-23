@@ -16,6 +16,7 @@ export interface GeminiHandlerOptions {
   maxTokens?: number;
   functionCallingMode?: 'ANY' | 'AUTO' | 'NONE';
   tools?: FunctionTool[];
+  onTaskCompleted?: (result: string, command?: string) => Promise<void>;
 }
 
 /**
@@ -31,6 +32,7 @@ export class GeminiHandler {
     maxTokens?: number;
     functionCallingMode?: 'ANY' | 'AUTO' | 'NONE';
     tools?: FunctionTool[];
+    onTaskCompleted?: (result: string, command?: string) => Promise<void>;
   };
 
   /**
@@ -45,6 +47,7 @@ export class GeminiHandler {
     maxTokens?: number;
     functionCallingMode?: 'ANY' | 'AUTO' | 'NONE';
     tools?: FunctionTool[];
+    onTaskCompleted?: (result: string, command?: string) => Promise<void>;
   }) {
     this.options = options;
     this.client = new GoogleGenerativeAI(options.apiKey);
@@ -186,7 +189,29 @@ export class GeminiHandler {
           if (tool) {
             const result = await tool.execute(functionCall.arguments);
             
-            // 関数実行結果をAIに送信して応答を得る
+            // タスク完了ツールの場合の特別処理
+            if (tool.name === 'attempt_completion') {
+              const completionResult = functionCall.arguments.result;
+              const completionCommand = functionCall.arguments.command;
+              
+              // タスク完了を処理
+              await this.handleTaskCompletion(completionResult, completionCommand);
+
+              // 結果を会話履歴に追加
+              const completionMessage = {
+                role: "assistant" as const,
+                content: `<タスク完了>\n${completionResult}`,
+                ts: Date.now(),
+              };
+              history.addMessage(completionMessage);
+
+              return {
+                text: completionMessage.content,
+                usage: { input: 0, output: 0 }
+              };
+            }
+            
+            // 通常の関数実行結果をAIに送信して応答を得る
             const finalResponse = await this.sendFunctionResponse(
               history.getMessages(),
               functionCall.name,
@@ -464,6 +489,34 @@ export class GeminiHandler {
     } catch (error) {
       if (error instanceof Error) {
         throw new Error(`フォローアップ質問処理エラー: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * タスク完了を処理する
+   * @param result タスク完了の結果
+   * @param command デモ用のコマンド（オプション）
+   * @returns 処理結果
+   */
+  async handleTaskCompletion(result: string, command?: string): Promise<string> {
+    try {
+      // タスク完了イベントをコールバックで通知
+      if (this.options.onTaskCompleted) {
+        await this.options.onTaskCompleted(result, command);
+      }
+      
+      let response = `<タスク完了>\n${result}`;
+      
+      if (command) {
+        response += `\n\n実行コマンド: ${command}`;
+      }
+      
+      return response;
+    } catch (error) {
+      if (error instanceof Error) {
+        throw new Error(`タスク完了処理エラー: ${error.message}`);
       }
       throw error;
     }

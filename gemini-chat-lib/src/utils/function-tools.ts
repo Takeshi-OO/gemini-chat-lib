@@ -28,6 +28,14 @@ export interface ReadFileParams extends ToolParams {
 }
 
 /**
+ * タスク完了ツールのパラメータ型
+ */
+export interface AttemptCompletionParams extends ToolParams {
+  result: string;
+  command?: string;
+}
+
+/**
  * function callingツールの基底インターフェース
  */
 export interface FunctionTool {
@@ -279,6 +287,47 @@ export function createAskFollowupQuestionTool(): FunctionTool {
 }
 
 /**
+ * タスク完了ツール
+ * @returns タスク完了ツール定義
+ */
+export function createAttemptCompletionTool(): FunctionTool {
+  return {
+    name: 'attempt_completion',
+    description: 'タスク完了を示します。各ツールの使用後、ユーザーはそのツールの成功または失敗と失敗の理由を応答します。タスクが完了したことを確認できたら、このツールを使用してユーザーに作業結果を提示します。オプションで、作業結果をデモするためのCLIコマンドを提供することもできます。',
+    parameters: {
+      properties: {
+        result: {
+          type: 'string',
+          description: 'タスクの結果。この結果がユーザーからのさらなる入力を必要としない形式で表現してください。結果の最後に質問や更なる支援の申し出を含めないでください。'
+        },
+        command: {
+          type: 'string',
+          description: 'ユーザーに結果のライブデモを表示するためのCLIコマンド（オプション）。例えば、作成したHTMLウェブサイトを表示するには `open index.html` を使用するか、ローカルで実行している開発サーバーを表示するには `open localhost:3000` を使用します。ただし、`echo` や `cat` などの単にテキストを出力するコマンドは使用しないでください。'
+        }
+      },
+      required: ['result']
+    },
+    execute: async (params: ToolParams): Promise<ToolResult> => {
+      try {
+        const completionParams = params as AttemptCompletionParams;
+        let responseContent = `<completion_result>${completionParams.result}</completion_result>`;
+        
+        if (completionParams.command) {
+          responseContent += `\n<command>${completionParams.command}</command>`;
+        }
+        
+        return { content: responseContent };
+      } catch (error) {
+        return {
+          content: '',
+          error: `タスク完了エラー: ${error instanceof Error ? error.message : String(error)}`
+        };
+      }
+    }
+  };
+}
+
+/**
  * ファイル編集ツールの引数型
  */
 export interface EditFileParams extends ToolParams {
@@ -484,6 +533,7 @@ export function createTools(workspaceRoot: string): FunctionTool[] {
     createCodebaseSearchTool(workspaceRoot),
     createListDirTool(workspaceRoot),
     createAskFollowupQuestionTool(),
+    createAttemptCompletionTool(),
     createEditFileTool(workspaceRoot),
     createWriteToFileTool(workspaceRoot)
   ];

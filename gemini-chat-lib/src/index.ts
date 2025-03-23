@@ -53,13 +53,15 @@ export {
   AskFollowupQuestionParams,
   EditFileParams,
   WriteToFileParams,
+  AttemptCompletionParams,
   createTools,
   createReadFileTool,
   createCodebaseSearchTool,
   createListDirTool,
   createAskFollowupQuestionTool,
   createEditFileTool,
-  createWriteToFileTool
+  createWriteToFileTool,
+  createAttemptCompletionTool
 } from "./utils/function-tools";
 
 // スライディングウィンドウ

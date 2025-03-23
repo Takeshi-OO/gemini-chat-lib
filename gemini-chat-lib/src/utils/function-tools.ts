@@ -368,7 +368,7 @@ export function createEditFileTool(workspaceRoot: string): FunctionTool {
         },
         code_edit: {
           type: 'string',
-          description: '編集したいコードの正確な行だけを指定してください。変更されないコードは決して指定しないでください。代わりに、すべての変更されないコードを「// ... existing code ...」のようなコメントで表してください。'
+          description: '編集内容を明確に指定してください。変更したい部分については変更後の内容を記述し、変更されないコードは「// ... existing code ...」のようなコメントで表してください。JSONのフィールド値を変更する場合は、変更後の値を明示してください（例："key": "新しい値"）。行番号付きの形式（例: "3 | 変更後の内容"）を使用する場合は、変更後の内容を記述してください。'
         }
       },
       required: ['target_file', 'instructions', 'code_edit']
@@ -449,17 +449,42 @@ function applyCodeEdit(existingContent: string, codeEdit: string): string {
   if (existingContent.trim().startsWith('{') && existingContent.trim().endsWith('}')) {
     try {
       // JSONの特定の行（例："version": "1.0.0"から"version": "2.0.0"）への変更を検出
-      const jsonPattern = /"([^"]+)":\s*"([^"]+)"/;
-      const match = codeEdit.match(jsonPattern);
+      const jsonPattern = /"([^"]+)":\s*"([^"]+)"/g;
+      const matches = [...codeEdit.matchAll(jsonPattern)];
       
-      if (match) {
-        const key = match[1];
-        const value = match[2];
+      if (matches.length > 0) {
+        const existingJson = JSON.parse(existingContent);
+        let wasUpdated = false;
+        
+        // 全ての一致を処理
+        for (const match of matches) {
+          const key = match[1];
+          const value = match[2];
+          
+          // キーが存在する場合、値を更新
+          if (existingJson.hasOwnProperty(key)) {
+            existingJson[key] = value;
+            wasUpdated = true;
+          }
+        }
+        
+        if (wasUpdated) {
+          return JSON.stringify(existingJson, null, 2);
+        }
+      }
+      
+      // 変更指定パターン（"key": "oldValue" → "key": "newValue"）を検出
+      const changePattern = /"([^"]+)":\s*"([^"]+)"\s*(?:→|->)\s*"([^"]+)":\s*"([^"]+)"/;
+      const changeMatch = codeEdit.match(changePattern);
+      
+      if (changeMatch) {
+        const key = changeMatch[1];
+        const newValue = changeMatch[4];
         const existingJson = JSON.parse(existingContent);
         
         // キーが存在する場合、値を更新
         if (existingJson.hasOwnProperty(key)) {
-          existingJson[key] = value;
+          existingJson[key] = newValue;
           return JSON.stringify(existingJson, null, 2);
         }
       }
@@ -477,13 +502,33 @@ function applyCodeEdit(existingContent: string, codeEdit: string): string {
     
     const existingLines = existingContent.split('\n');
     
-    // 指定された行を置き換える
+    // 指定された行を置き換える（変更後の内容で）
     if (lineNum >= 0 && lineNum < existingLines.length) {
       existingLines[lineNum] = content;
       return existingLines.join('\n');
     }
     
     console.error('Invalid line number in edit:', lineNum, 'max:', existingLines.length - 1);
+    return existingContent;
+  }
+  
+  // 行番号範囲付きの編集形式をチェック（例: "3-5 | 新しい内容")
+  const lineRangeMatch = codeEdit.match(/^(\d+)-(\d+)\s+\|\s+([\s\S]*)$/);
+  if (lineRangeMatch) {
+    const startLine = parseInt(lineRangeMatch[1], 10) - 1;
+    const endLine = parseInt(lineRangeMatch[2], 10) - 1;
+    const newContent = lineRangeMatch[3].split('\n');
+    
+    const existingLines = existingContent.split('\n');
+    
+    // 行範囲が有効かチェック
+    if (startLine >= 0 && endLine < existingLines.length && startLine <= endLine) {
+      // 範囲内の行を新しい内容で置き換え
+      existingLines.splice(startLine, endLine - startLine + 1, ...newContent);
+      return existingLines.join('\n');
+    }
+    
+    console.error('Invalid line range in edit:', startLine, '-', endLine, 'max:', existingLines.length - 1);
     return existingContent;
   }
   

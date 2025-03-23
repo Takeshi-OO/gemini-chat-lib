@@ -70,11 +70,9 @@ async function runSequentialToolExecutionTest() {
     });
     
     // プロンプト (ツールを指定しない)
-    const prompt = `test-sequentialディレクトリにあるconfig.jsonファイルを読み込み、バージョン番号を"1.0.0"から"2.0.0"に更新してください。
-ファイル編集の際は、変更前と変更後の値を明確に示してください。例えば、JSONファイルのバージョン値を更新する際は、次のような形式で変更してください：
-"version": "1.0.0" を "version": "2.0.0" に変更
-
-タスクが完了したら教えてください。`;
+    const prompt = `test-sequentialディレクトリにあるconfig.jsonファイルを読み込み、著者名を更新してください。
+現在の値はおそらく"テストユーザー"ですが、これを"システム管理者"に変更してください。
+編集後、変更内容を簡潔に報告してください。`;
 
     console.log('プロンプト:', prompt);
     
@@ -105,12 +103,12 @@ async function runSequentialToolExecutionTest() {
       console.log('\n===== 最終的なconfig.jsonの内容 =====');
       console.log(configContent);
       
-      // バージョンが更新されているか確認
+      // 著者名が更新されているか確認
       const config = JSON.parse(configContent);
-      if (config.version === '2.0.0') {
-        console.log('✅ 成功: バージョンが正しく更新されています');
+      if (config.author === 'システム管理者') {
+        console.log('✅ 成功: 著者名が正しく更新されています');
       } else {
-        console.log(`❌ 失敗: バージョンが更新されていません (${config.version})`);
+        console.log(`❌ 失敗: 著者名が更新されていません (${config.author})`);
       }
     } catch (error) {
       console.error('config.jsonの読み込みエラー:', error);

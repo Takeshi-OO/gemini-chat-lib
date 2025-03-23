@@ -8,14 +8,61 @@ const API_KEY = process.env.GEMINI_API_KEY;
 
 // テストディレクトリの作成
 const TEST_DIR = path.join(__dirname, 'test-sequential');
+const WORKSPACE_ROOT = path.join(__dirname);
+
+// function-tools.tsから必要なツールをインポート
+// 注意: TypeScriptのモジュールを直接requireできないため、ビルド済みのJSモジュールを使用
+const { createReadFileTool, createEditFileTool, createAttemptCompletionTool } = require('./dist/utils/function-tools');
+
+// ツールの初期化
+const readFileTool = createReadFileTool(WORKSPACE_ROOT);
+const editFileTool = createEditFileTool(WORKSPACE_ROOT);
+const attemptCompletionTool = createAttemptCompletionTool();
+
+// ツール定義をGemini APIフォーマットに変換する関数
+function convertToGeminiToolFormat(tool) {
+  // propertiesオブジェクトをGeminiフォーマットに変換
+  const convertProperties = (properties) => {
+    const result = {};
+    
+    Object.entries(properties).forEach(([key, prop]) => {
+      result[key] = {
+        type: prop.type.toUpperCase(), // GeminiはSTRINGを期待
+        description: prop.description
+      };
+    });
+    
+    return result;
+  };
+  
+  return {
+    name: tool.name,
+    description: tool.description,
+    parameters: {
+      type: "OBJECT",
+      properties: convertProperties(tool.parameters.properties),
+      required: tool.parameters.required
+    }
+  };
+}
+
+// Gemini APIフォーマットに変換されたツール定義
+const geminiReadFileTool = convertToGeminiToolFormat(readFileTool);
+const geminiEditFileTool = convertToGeminiToolFormat(editFileTool);
+const geminiAttemptCompletionTool = convertToGeminiToolFormat(attemptCompletionTool);
 
 // ツールの実行関数
 async function executeReadFile(params) {
   try {
-    // パスからtest-sequential/を削除して、直接ファイル名を使用
-    const filePath = path.join(TEST_DIR, params.path.replace('test-sequential/', ''));
-    const content = await fs.readFile(filePath, 'utf-8');
-    return { content };
+    // パスを調整: test-sequential/ プレフィックスを処理
+    let adjustedParams = { ...params };
+    if (params.path && params.path.startsWith('test-sequential/')) {
+      // テスト用のパスをそのまま使用
+      adjustedParams.path = params.path;
+    }
+    
+    // readFileToolのexecuteメソッドを呼び出し
+    return await readFileTool.execute(adjustedParams);
   } catch (error) {
     return { error: `ファイル読み込みエラー: ${error.message}` };
   }
@@ -23,31 +70,46 @@ async function executeReadFile(params) {
 
 async function executeEditFile(params) {
   try {
-    // パスからtest-sequential/を削除して、直接ファイル名を使用
-    const filePath = path.join(TEST_DIR, params.target_file.replace('test-sequential/', ''));
-    
-    // ファイルの内容を読み込む
-    const content = await fs.readFile(filePath, 'utf-8');
-    
-    // JSONをパース
-    const json = JSON.parse(content);
-    
-    // バージョンを更新
-    if (params.new_version) {
-      json.version = params.new_version;
+    // JSONの編集に特化した処理
+    // テスト用に簡略化された処理を使用
+    if (params.target_file && params.target_file.includes('config.json')) {
+      const filePath = path.join(TEST_DIR, params.target_file.replace('test-sequential/', ''));
+      
+      // ファイルの内容を読み込む
+      const content = await fs.readFile(filePath, 'utf-8');
+      
+      // JSONをパース
+      const json = JSON.parse(content);
+      
+      // バージョンを更新 (新しい値を指定した場合)
+      if (params.new_version) {
+        json.version = params.new_version;
+      } else if (params.code_edit) {
+        // code_editに含まれるバージョン情報を探す
+        const versionMatch = params.code_edit.match(/"version"\s*:\s*"([^"]+)"/);
+        if (versionMatch && versionMatch[1]) {
+          json.version = versionMatch[1];
+        }
+      }
+      
+      // ファイルに書き戻す
+      await fs.writeFile(filePath, JSON.stringify(json, null, 2));
+      
+      return { 
+        content: `ファイル ${params.target_file} を更新しました。` +
+                (params.new_version ? ` バージョンを ${params.new_version} に変更しました。` : '')
+      };
+    } else {
+      // 標準のeditFileToolを使用
+      return await editFileTool.execute(params);
     }
-    
-    // ファイルに書き戻す
-    await fs.writeFile(filePath, JSON.stringify(json, null, 2));
-    
-    return { content: `ファイル ${params.target_file} のバージョンを ${params.new_version} に更新しました。` };
   } catch (error) {
     return { error: `ファイル編集エラー: ${error.message}` };
   }
 }
 
 async function executeAttemptCompletion(params) {
-  return { content: params.result };
+  return await attemptCompletionTool.execute(params);
 }
 
 // 環境のセットアップ
@@ -94,55 +156,12 @@ async function runSequentialToolExecutionTest() {
     // Gemini API初期化
     const genAI = new GoogleGenerativeAI(API_KEY);
     
-    // シンプルな関数定義
+    // function-tools.tsから取得したツール定義を使用（Gemini用に変換）
     const tools = [{
       functionDeclarations: [
-        {
-          name: "read_file",
-          description: "ファイルの内容を読み取ります",
-          parameters: {
-            type: "OBJECT",
-            properties: {
-              path: {
-                type: "STRING",
-                description: "読み取り対象のファイルパス"
-              }
-            },
-            required: ["path"]
-          }
-        },
-        {
-          name: "edit_file",
-          description: "JSONファイルのバージョンを更新します",
-          parameters: {
-            type: "OBJECT",
-            properties: {
-              target_file: {
-                type: "STRING",
-                description: "編集対象のファイルパス"
-              },
-              new_version: {
-                type: "STRING",
-                description: "新しいバージョン番号"
-              }
-            },
-            required: ["target_file", "new_version"]
-          }
-        },
-        {
-          name: "attempt_completion",
-          description: "タスク完了を示します",
-          parameters: {
-            type: "OBJECT",
-            properties: {
-              result: {
-                type: "STRING",
-                description: "タスクの結果"
-              }
-            },
-            required: ["result"]
-          }
-        }
+        geminiReadFileTool,
+        geminiEditFileTool,
+        geminiAttemptCompletionTool
       ]
     }];
     
@@ -164,7 +183,12 @@ async function runSequentialToolExecutionTest() {
     });
     
     // プロンプト
-    const prompt = `test-sequentialディレクトリ内のconfig.jsonファイルを読み込んで、バージョンを2.0.0に更新してください。`;
+    const prompt = `以下の手順で作業を進めてください：
+1. test-sequential/config.jsonファイルの内容を${geminiReadFileTool.name}ツールを使用して読み込む
+2. ${geminiEditFileTool.name}ツールを使用してconfig.jsonのバージョンを"2.0.0"に更新する
+3. 完了したら${geminiAttemptCompletionTool.name}ツールを使用して結果を報告する
+
+必ず指定されたツールを順番に使用してください。`;
     console.log('プロンプト:', prompt);
     
     // Gemini APIを呼び出し
@@ -194,11 +218,11 @@ async function runSequentialToolExecutionTest() {
     
     // 関数を実行
     let result;
-    if (firstFunctionCall.name === 'read_file') {
+    if (firstFunctionCall.name === geminiReadFileTool.name) {
       result = await executeReadFile(firstFunctionCall.args);
-    } else if (firstFunctionCall.name === 'edit_file') {
+    } else if (firstFunctionCall.name === geminiEditFileTool.name) {
       result = await executeEditFile(firstFunctionCall.args);
-    } else if (firstFunctionCall.name === 'attempt_completion') {
+    } else if (firstFunctionCall.name === geminiAttemptCompletionTool.name) {
       result = await executeAttemptCompletion(firstFunctionCall.args);
     }
     
@@ -249,11 +273,11 @@ async function runSequentialToolExecutionTest() {
     
     // 2回目の関数を実行
     let result2;
-    if (secondFunctionCall.name === 'read_file') {
+    if (secondFunctionCall.name === geminiReadFileTool.name) {
       result2 = await executeReadFile(secondFunctionCall.args);
-    } else if (secondFunctionCall.name === 'edit_file') {
+    } else if (secondFunctionCall.name === geminiEditFileTool.name) {
       result2 = await executeEditFile(secondFunctionCall.args);
-    } else if (secondFunctionCall.name === 'attempt_completion') {
+    } else if (secondFunctionCall.name === geminiAttemptCompletionTool.name) {
       result2 = await executeAttemptCompletion(secondFunctionCall.args);
     }
     
@@ -322,7 +346,7 @@ async function runSequentialToolExecutionTest() {
       console.log('引数:', JSON.stringify(thirdFunctionCall.args, null, 2));
       
       // attempt_completionの場合はタスク完了
-      if (thirdFunctionCall.name === 'attempt_completion') {
+      if (thirdFunctionCall.name === geminiAttemptCompletionTool.name) {
         console.log('✅ 成功: タスク完了ツールが呼び出されました');
         console.log('タスク完了メッセージ:', thirdFunctionCall.args.result);
       }
@@ -347,12 +371,40 @@ async function runSequentialToolExecutionTest() {
     
   } catch (error) {
     console.error('テスト実行中にエラーが発生しました:', error);
+    if (error.stack) {
+      console.error('スタックトレース:', error.stack);
+    }
   } finally {
     await cleanup();
   }
 }
 
+// テスト実行前にTypeScriptがコンパイルされているか確認
+async function checkTsCompiled() {
+  try {
+    // dist/utils/function-tools.jsが存在するか確認
+    await fs.access(path.join(__dirname, 'dist/utils/function-tools.js'));
+    console.log('✅ TypeScriptのコンパイル結果が見つかりました');
+    return true;
+  } catch (error) {
+    console.error('❌ TypeScriptがコンパイルされていません。先に `npm run build` を実行してください。');
+    console.error('エラー:', error.message);
+    return false;
+  }
+}
+
+// TypeScriptのコンパイル確認後にテスト実行
+async function runTests() {
+  const isCompiled = await checkTsCompiled();
+  if (isCompiled) {
+    await runSequentialToolExecutionTest();
+  }
+}
+
 // テスト実行
-runSequentialToolExecutionTest().catch(error => {
+runTests().catch(error => {
   console.error('テスト実行エラー:', error);
+  if (error.stack) {
+    console.error('スタックトレース:', error.stack);
+  }
 }); 

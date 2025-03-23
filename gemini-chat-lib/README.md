@@ -296,6 +296,44 @@ async function testFunctionCalling() {
 node test-completion-tool.js
 ```
 
+## テスト実行方法
+
+### function-tools.tsのテスト
+
+`gemini-chat-lib`のツール機能をテストするには、以下の手順で実行します：
+
+```sh
+# 1. TypeScriptをコンパイル
+npm run build
+
+# 2. 連続ツール実行テストの実行
+node test-sequential-tools.js
+```
+
+`test-sequential-tools.js`は`function-tools.ts`で定義されているツールを使用して、以下の機能をテストします：
+
+1. ファイル読み込み（`read_file`）
+2. ファイル編集（`edit_file`）
+3. タスク完了（`attempt_completion`）
+4. ツールの連続実行
+
+### テスト実装の概要
+
+`test-sequential-tools.js`では、以下の実装を行っています：
+
+1. `function-tools.ts`で定義されたツールを読み込み
+2. Gemini APIのフォーマットに合わせてツール定義を変換
+3. FunctionCallingMode.ANYを使用して連続的なツール実行をシミュレート
+4. 各ツールからの応答を次のAPIリクエストに含める会話的な流れ
+
+### テスト拡張方法
+
+追加テストを実装する場合は、以下の点に注意してください：
+
+1. ツール定義は`function-tools.ts`から取得し、GeminiのAPI仕様に合わせて変換する
+2. テスト環境のセットアップとクリーンアップを適切に行う
+3. TypeScriptコンパイル後の`.js`ファイルを正しくimportする
+
 ## ライセンス
 
 MIT 

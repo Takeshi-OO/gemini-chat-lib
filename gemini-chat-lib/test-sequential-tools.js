@@ -11,7 +11,7 @@ const WORKSPACE_ROOT = path.join(__dirname);
 
 // gemini-chat-libからモジュールをインポート
 const { GeminiHandler, ChatHistory } = require('./dist/index');
-const { createReadFileTool, createEditFileTool, createAttemptCompletionTool } = require('./dist/utils/function-tools');
+const { createTools } = require('./dist/utils/function-tools');
 
 // 環境のセットアップ
 async function setup() {
@@ -60,34 +60,19 @@ async function runSequentialToolExecutionTest() {
     // テスト1: ファイル読み込みと編集の連続実行
     console.log('\n===== テスト1: ファイル読み込みと編集の連続実行 =====');
     
-    // 必要な最小限のツールだけを準備
-    const readFileTool = createReadFileTool(WORKSPACE_ROOT);
-    const editFileTool = createEditFileTool(WORKSPACE_ROOT);
-    const attemptCompletionTool = createAttemptCompletionTool();
+    // 全てのツールを準備
+    const tools = createTools(WORKSPACE_ROOT);
     
-    // ツール実行のログを追加
-    const onToolExecutionCompleted = async (toolName, params, result) => {
-      console.log(`\n===== ツール実行完了: ${toolName} =====`);
-      console.log('パラメータ:', JSON.stringify(params, null, 2));
-      console.log('結果:', JSON.stringify(result, null, 2));
-    };
-    
-    // GeminiHandlerを初期化 (最小限のツールを使用、ログコールバック追加)
+    // GeminiHandlerを初期化
     const geminiHandler = new GeminiHandler({
       apiKey: API_KEY,
-      tools: [readFileTool, editFileTool, attemptCompletionTool],
-      onToolExecutionCompleted
+      tools: tools
     });
     
-    // プロンプト (特定のツールを指定しない)
+    // プロンプト (ツールを指定しない)
     const prompt = `test-sequentialディレクトリにあるconfig.jsonファイルを読み込み、バージョン番号を"1.0.0"から"2.0.0"に更新してください。
-ファイルを編集する際は、edit_fileツールを使用し、必ず以下の3つのパラメータを指定してください：
-- target_file: 編集するファイル名（例：test-sequential/config.json）
-- instructions: 何を変更するかの説明（例：バージョン番号を2.0.0に変更します）
-- code_edit: 変更するコード。既存コードは// ... existing code ...で示します。例：
-  // ... existing code ...
-  "version": "2.0.0",
-  // ... existing code ...
+ファイル編集の際は、変更前と変更後の値を明確に示してください。例えば、JSONファイルのバージョン値を更新する際は、次のような形式で変更してください：
+"version": "1.0.0" を "version": "2.0.0" に変更
 
 タスクが完了したら教えてください。`;
 

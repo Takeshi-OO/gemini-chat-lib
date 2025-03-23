@@ -5,6 +5,7 @@ import { ApiStream } from "./stream";
 import { GeminiModelId, ModelInfo, geminiDefaultModelId, geminiModels } from "./models";
 import { ChatHistory } from "../conversation/message-history";
 import { FunctionTool } from "../utils/function-tools";
+import { ToolExecutionManager } from "../utils/tool-execution-manager";
 
 const GEMINI_DEFAULT_TEMPERATURE = 0;
 
@@ -17,6 +18,9 @@ export interface GeminiHandlerOptions {
   functionCallingMode?: 'ANY' | 'AUTO' | 'NONE';
   tools?: FunctionTool[];
   onTaskCompleted?: (result: string, command?: string) => Promise<void>;
+  toolsRequiringApproval?: string[];
+  onToolApprovalRequired?: (toolName: string, params: any) => Promise<boolean>;
+  onToolExecutionCompleted?: (toolName: string, params: any, result: any) => Promise<void>;
 }
 
 /**
@@ -33,7 +37,11 @@ export class GeminiHandler {
     functionCallingMode?: 'ANY' | 'AUTO' | 'NONE';
     tools?: FunctionTool[];
     onTaskCompleted?: (result: string, command?: string) => Promise<void>;
+    toolsRequiringApproval?: string[];
+    onToolApprovalRequired?: (toolName: string, params: any) => Promise<boolean>;
+    onToolExecutionCompleted?: (toolName: string, params: any, result: any) => Promise<void>;
   };
+  private toolExecutionManager?: ToolExecutionManager;
 
   /**
    * コンストラクタ
@@ -48,6 +56,9 @@ export class GeminiHandler {
     functionCallingMode?: 'ANY' | 'AUTO' | 'NONE';
     tools?: FunctionTool[];
     onTaskCompleted?: (result: string, command?: string) => Promise<void>;
+    toolsRequiringApproval?: string[];
+    onToolApprovalRequired?: (toolName: string, params: any) => Promise<boolean>;
+    onToolExecutionCompleted?: (toolName: string, params: any, result: any) => Promise<void>;
   }) {
     this.options = options;
     this.client = new GoogleGenerativeAI(options.apiKey);
@@ -177,61 +188,13 @@ export class GeminiHandler {
       // 応答を会話履歴に追加
       history.addMessage(functionCallResponse);
       
-      // 関数呼び出しがあるか確認
-      if (Array.isArray(functionCallResponse.content) && 
-          functionCallResponse.content.length > 0 && 
-          functionCallResponse.content[0].type === 'function_call') {
-        const functionCallContent = functionCallResponse.content[0];
-        if ('function_call' in functionCallContent && functionCallContent.function_call) {
-          const functionCall = functionCallContent.function_call;
-          // 関数実行
-          const tool = this.options.tools.find(t => t.name === functionCall.name);
-          if (tool) {
-            const result = await tool.execute(functionCall.arguments);
-            
-            // タスク完了ツールの場合の特別処理
-            if (tool.name === 'attempt_completion') {
-              const completionResult = functionCall.arguments.result;
-              const completionCommand = functionCall.arguments.command;
-              
-              // タスク完了を処理
-              await this.handleTaskCompletion(completionResult, completionCommand);
-
-              // 結果を会話履歴に追加
-              const completionMessage = {
-                role: "assistant" as const,
-                content: `<タスク完了>\n${completionResult}`,
-                ts: Date.now(),
-              };
-              history.addMessage(completionMessage);
-
-              return {
-                text: completionMessage.content,
-                usage: { input: 0, output: 0 }
-              };
-            }
-            
-            // 通常の関数実行結果をAIに送信して応答を得る
-            const finalResponse = await this.sendFunctionResponse(
-              history.getMessages(),
-              functionCall.name,
-              result
-            );
-            
-            // 応答を会話履歴に追加
-            history.addMessage(finalResponse);
-            
-            return {
-              text: typeof finalResponse.content === 'string' ? 
-                    finalResponse.content : 
-                    JSON.stringify(finalResponse.content),
-              usage: { input: 0, output: 0 } // 正確なトークン使用量の取得は難しいため、仮の値を設定
-            };
-          }
-        }
+      // 連続ツール実行を処理
+      const result = await this.handleSequentialToolExecution(history, functionCallResponse);
+      if (result) {
+        return result;
       }
       
-      // 関数呼び出しがない場合や実行できなかった場合
+      // 連続ツール実行がない、またはタスク完了した場合は通常の応答を返す
       return {
         text: typeof functionCallResponse.content === 'string' ? 
               functionCallResponse.content : 
@@ -268,6 +231,91 @@ export class GeminiHandler {
         output: outputTokens,
       },
     };
+  }
+
+  /**
+   * 連続ツール実行を処理する
+   * @param history 会話履歴
+   * @param initialResponse 初期応答
+   * @returns 処理結果（ある場合）
+   */
+  private async handleSequentialToolExecution(
+    history: ChatHistory,
+    initialResponse: ChatMessage
+  ): Promise<{ text: string; usage: { input: number; output: number } } | null> {
+    // 関数呼び出しがあるか確認
+    if (!initialResponse.content || typeof initialResponse.content === 'string') {
+      return null;
+    }
+    
+    const functionCallContent = Array.isArray(initialResponse.content)
+      ? initialResponse.content.find(item => item.type === 'function_call')
+      : undefined;
+    
+    if (!functionCallContent || !('function_call' in functionCallContent)) {
+      return null;
+    }
+    
+    // ツール実行マネージャーを初期化
+    this.toolExecutionManager = new ToolExecutionManager({
+      tools: this.options.tools || [],
+      chatHistory: history,
+      toolsRequiringApproval: this.options.toolsRequiringApproval || ['write_to_file', 'edit_file'],
+      onToolApprovalRequired: this.options.onToolApprovalRequired,
+      onToolExecutionCompleted: this.options.onToolExecutionCompleted,
+    });
+    
+    // 連続ツール実行を実行
+    const taskCompleted = await this.toolExecutionManager.executeToolsSequentially(
+      initialResponse,
+      async (messages) => {
+        // 新しい応答を生成する関数
+        const functions = this.options.tools?.map(tool => ({
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters.properties
+        })) || [];
+        
+        const allToolNames = this.options.tools?.map(tool => tool.name) || [];
+        return await this.sendMessageWithFunctions(messages, functions, allToolNames);
+      }
+    );
+    
+    // タスク完了ツールが呼び出された場合
+    if (taskCompleted) {
+      const lastMessage = history.getMessages().slice(-1)[0];
+      if (lastMessage.role === 'assistant' && Array.isArray(lastMessage.content)) {
+        const functionCall = lastMessage.content.find(item => 
+          item.type === 'function_call' && 
+          'function_call' in item && 
+          item.function_call?.name === 'attempt_completion'
+        );
+        
+        if (functionCall && 'function_call' in functionCall && functionCall.function_call) {
+          const completionResult = functionCall.function_call.arguments.result;
+          const completionCommand = functionCall.function_call.arguments.command;
+          
+          // タスク完了を処理
+          await this.handleTaskCompletion(completionResult, completionCommand);
+          
+          // 結果を会話履歴に追加
+          const completionMessage = {
+            role: "assistant" as const,
+            content: `<タスク完了>\n${completionResult}`,
+            ts: Date.now(),
+          };
+          history.addMessage(completionMessage);
+          
+          return {
+            text: completionMessage.content,
+            usage: { input: 0, output: 0 }
+          };
+        }
+      }
+    }
+    
+    // タスク完了していない場合はnullを返す
+    return null;
   }
 
   /**

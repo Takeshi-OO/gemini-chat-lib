@@ -64,6 +64,14 @@ export {
   createAttemptCompletionTool
 } from "./utils/function-tools";
 
+// 連続ツール実行マネージャー
+export {
+  ToolExecutionManager,
+  ToolExecutionManagerOptions,
+  ToolExecutionCompletedCallback,
+  ToolApprovalCallback
+} from "./utils/tool-execution-manager";
+
 // スライディングウィンドウ
 export {
   truncateConversation,

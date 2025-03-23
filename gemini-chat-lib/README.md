@@ -1,6 +1,14 @@
 # Gemini Chat Library
 
-Google Gemini AIモデルと簡単にチャットするためのTypeScriptライブラリです。
+Gemini ProモデルによるチャットとFunction Callingを実装するためのライブラリです。
+
+## 機能一覧
+
+- Gemini APIとの連携
+- 会話履歴の管理
+- Function Callingサポート
+- ファイル操作やコードベース検索などのツール提供
+- 連続ツール実行（パイプライン処理）
 
 ## インストール
 
@@ -37,44 +45,130 @@ GEMINI_MAX_TOKENS=8192
 ## 基本的な使い方
 
 ```javascript
-// 環境変数を読み込む
-require('dotenv').config({ path: '.env.local' });
+const { GeminiHandler, ChatHistory } = require('gemini-chat-lib');
 
-// APIキーが設定されているか確認
-if (!process.env.GEMINI_API_KEY) {
-  console.error('GEMINI_API_KEYが設定されていません。.env.localファイルを確認してください。');
-  process.exit(1);
+// Gemini Handlerの初期化
+const geminiHandler = new GeminiHandler({
+  apiKey: 'YOUR_GEMINI_API_KEY',
+  modelId: 'gemini-1.5-pro',
+  temperature: 0.2
+});
+
+// 会話履歴を初期化
+const chatHistory = new ChatHistory();
+
+// メッセージを送信
+async function sendMessage(message) {
+  const response = await geminiHandler.sendMessage(message, chatHistory);
+  console.log(response.text);
 }
 
-const { GeminiHandler } = require('gemini-chat-lib');
-
-// 環境変数からオプションを取得
-const options = {
-  apiKey: process.env.GEMINI_API_KEY,
-  modelId: process.env.GEMINI_MODEL_ID || 'gemini-1.5-pro-002',
-  baseUrl: process.env.GEMINI_BASE_URL || undefined,
-  temperature: process.env.GEMINI_TEMPERATURE ? parseFloat(process.env.GEMINI_TEMPERATURE) : 0.7,
-  maxTokens: process.env.GEMINI_MAX_TOKENS ? parseInt(process.env.GEMINI_MAX_TOKENS) : 8192
-};
-
-async function chatWithGemini() {
-  try {
-    // GeminiHandlerを初期化
-    const handler = new GeminiHandler(options);
-    
-    // メッセージを送信
-    const response = await handler.sendMessage('こんにちは、元気ですか？');
-    
-    // レスポンスを表示
-    console.log('Geminiからの応答:', response.text);
-    console.log('使用トークン:', response.usage);
-  } catch (error) {
-    console.error('エラーが発生しました:', error);
-  }
-}
-
-chatWithGemini();
+// 例
+sendMessage('こんにちは、世界！');
 ```
+
+## Function Calling機能
+
+Function Calling機能を使用すると、AIがユーザーの要望に応じて適切なツールを呼び出して処理を行うことができます。
+
+```javascript
+const { GeminiHandler, ChatHistory, createTools } = require('gemini-chat-lib');
+
+// ワークスペースのルートディレクトリ
+const WORKSPACE_ROOT = process.cwd();
+
+// Gemini Handlerの初期化（Function Calling対応）
+const geminiHandler = new GeminiHandler({
+  apiKey: 'YOUR_GEMINI_API_KEY',
+  modelId: 'gemini-1.5-pro',
+  temperature: 0.2,
+  functionCallingMode: 'ANY', // ANYはFunction Callingを強制
+  tools: createTools(WORKSPACE_ROOT) // 利用可能なツールセットを提供
+});
+
+// 会話履歴を初期化
+const chatHistory = new ChatHistory();
+
+// メッセージを送信
+async function sendMessage(message) {
+  const response = await geminiHandler.sendMessage(message, chatHistory);
+  console.log(response.text);
+}
+
+// 例: AIにファイル検索とコンテンツ読み込みを依頼
+sendMessage('package.jsonファイルを探して、その内容を教えてください');
+```
+
+## 連続ツール実行機能
+
+連続ツール実行機能を使用すると、AIが適切なツールを組み合わせて連続的にタスクを実行するパイプライン処理が可能になります。これにより、「ファイルを検索し、内容を読み込み、編集する」といった複雑なタスクをユーザーの追加入力なしに自動で実行できます。
+
+```javascript
+const { 
+  GeminiHandler, 
+  ChatHistory, 
+  createTools, 
+  ToolExecutionManager 
+} = require('gemini-chat-lib');
+
+// Gemini Handlerの初期化（連続ツール実行対応）
+const geminiHandler = new GeminiHandler({
+  apiKey: 'YOUR_GEMINI_API_KEY',
+  modelId: 'gemini-1.5-pro',
+  temperature: 0.2,
+  functionCallingMode: 'ANY',
+  tools: createTools(WORKSPACE_ROOT),
+  
+  // ユーザー承認が必要なツールを指定
+  toolsRequiringApproval: ['write_to_file', 'edit_file'],
+  
+  // ユーザー承認コールバック
+  onToolApprovalRequired: async (toolName, params) => {
+    // ユーザーにツール実行の承認を求めるロジック
+    // ファイル編集など重要な操作の前に確認を取る
+    return true; // または false で拒否
+  },
+  
+  // ツール実行完了コールバック
+  onToolExecutionCompleted: async (toolName, params, result) => {
+    console.log(`ツール ${toolName} が実行されました`);
+  },
+  
+  // タスク完了コールバック
+  onTaskCompleted: async (result, command) => {
+    console.log('タスクが完了しました:', result);
+  }
+});
+
+// 会話履歴を初期化
+const chatHistory = new ChatHistory();
+
+// メッセージを送信（連続ツール実行が自動的に処理される）
+async function sendMessage(message) {
+  const response = await geminiHandler.sendMessage(message, chatHistory);
+  console.log(response.text);
+}
+
+// 例: 連続したツール実行を伴うタスク
+sendMessage('package.jsonファイルのバージョンを1.0.1に更新してください');
+```
+
+### 連続ツール実行の流れ
+
+1. AIがユーザーの要望を理解し、適切なツールを選択（例: codebase_search）
+2. ツールの実行結果を受け取り、次に必要なツールを判断（例: read_file）
+3. さらに次のステップに進む（例: edit_file）
+4. 最終的にタスク完了（attempt_completion）で処理を終了
+
+この機能により、ユーザーは複雑なタスクを単一の指示で実行でき、AIが適切なツールを連続して使用して効率的に処理を行います。
+
+## サンプルコード
+
+詳細なサンプルコードは `examples` ディレクトリに用意されています：
+
+- `basic-chat.js`: 基本的なチャット機能
+- `function-calling.js`: Function Calling機能の使用例
+- `sequential-tool-execution.js`: 連続ツール実行の使用例
 
 ## 会話履歴の管理
 

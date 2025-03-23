@@ -11,7 +11,7 @@ export {
 } from "./conversation/types";
 
 // Gemini関連
-export { GeminiHandler, GeminiHandlerOptions } from "./gemini/gemini-handler";
+export { GeminiHandler } from "./gemini/gemini-handler";
 export { 
   convertChatMessageToGemini, 
   convertChatContentToGeminiParts,
@@ -78,4 +78,12 @@ export {
   truncateConversationIfNeeded,
   estimateTokenCount,
   TOKEN_BUFFER_PERCENTAGE
-} from "./utils/sliding-window"; 
+} from "./utils/sliding-window";
+
+// 型定義をエクスポート
+export type { GeminiHandlerOptions } from './gemini/gemini-handler';
+
+// 互換性のための型エイリアス
+import { ChatContent, ChatRole } from "./conversation/types";
+export type MessageContent = ChatContent;
+export type MessageRole = ChatRole; 

@@ -410,6 +410,24 @@ function applyCodeEdit(existingContent: string, codeEdit: string): string {
   if (!existingContent.trim()) {
     return codeEdit.replace(/\/\/ \.\.\. existing code \.\.\.\n/g, '');
   }
+
+  // 行番号付きの編集形式をチェック（例: "3 |   \"version\": \"2.0.0\",")
+  const lineNumberMatch = codeEdit.match(/^(\d+)\s+\|\s+(.*)$/);
+  if (lineNumberMatch) {
+    const lineNum = parseInt(lineNumberMatch[1], 10) - 1; // 0ベースのインデックスに変換
+    const content = lineNumberMatch[2];
+    
+    const existingLines = existingContent.split('\n');
+    
+    // 指定された行を置き換える
+    if (lineNum >= 0 && lineNum < existingLines.length) {
+      existingLines[lineNum] = content;
+      return existingLines.join('\n');
+    }
+    
+    console.error('Invalid line number in edit:', lineNum, 'max:', existingLines.length - 1);
+    return existingContent;
+  }
   
   const existingLines = existingContent.split('\n');
   const editLines = codeEdit.split('\n');
@@ -419,6 +437,25 @@ function applyCodeEdit(existingContent: string, codeEdit: string): string {
   
   for (let i = 0; i < editLines.length; i++) {
     const line = editLines[i];
+    
+    // 行番号付きの編集形式をチェック（例: "3 |   \"version\": \"2.0.0\",")
+    const lineMatch = line.match(/^(\d+)\s+\|\s+(.*)$/);
+    if (lineMatch) {
+      const lineNum = parseInt(lineMatch[1], 10) - 1;
+      const content = lineMatch[2];
+      
+      // 指定された行が有効な範囲内であれば置き換える
+      if (lineNum >= 0 && lineNum < existingLines.length) {
+        // 現在位置からその行までを結果に追加
+        if (lineNum > existingIndex) {
+          result = result.concat(existingLines.slice(existingIndex, lineNum));
+        }
+        // 行を置き換えて追加
+        result.push(content);
+        existingIndex = lineNum + 1;
+        continue;
+      }
+    }
     
     // 既存コードのプレースホルダーを処理
     if (line.trim() === '// ... existing code ...' || line.trim() === '/* ... existing code ... */') {

@@ -1,7 +1,6 @@
 require('dotenv').config({ path: '.env.local' });
 const fs = require('fs').promises;
 const path = require('path');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // APIキーの取得
 const API_KEY = process.env.GEMINI_API_KEY;
@@ -13,7 +12,6 @@ const WORKSPACE_ROOT = path.join(__dirname);
 // gemini-chat-libからモジュールをインポート
 const { GeminiHandler, ChatHistory } = require('./dist/index');
 const { createReadFileTool, createEditFileTool, createAttemptCompletionTool } = require('./dist/utils/function-tools');
-const { ToolExecutionManager } = require('./dist/utils/tool-execution-manager');
 
 // 環境のセットアップ
 async function setup() {
@@ -56,42 +54,42 @@ async function runSequentialToolExecutionTest() {
     await setup();
     console.log('\n===== 連続ツール実行テスト開始 =====');
     
-    // ツールの初期化
-    const readFileTool = createReadFileTool(WORKSPACE_ROOT);
-    const editFileTool = createEditFileTool(WORKSPACE_ROOT);
-    const attemptCompletionTool = createAttemptCompletionTool();
-    
     // 会話履歴を初期化
     const chatHistory = new ChatHistory();
     
     // テスト1: ファイル読み込みと編集の連続実行
     console.log('\n===== テスト1: ファイル読み込みと編集の連続実行 =====');
     
-    // GeminiHandlerを初期化
+    // 必要な最小限のツールだけを準備
+    const readFileTool = createReadFileTool(WORKSPACE_ROOT);
+    const editFileTool = createEditFileTool(WORKSPACE_ROOT);
+    const attemptCompletionTool = createAttemptCompletionTool();
+    
+    // ツール実行のログを追加
+    const onToolExecutionCompleted = async (toolName, params, result) => {
+      console.log(`\n===== ツール実行完了: ${toolName} =====`);
+      console.log('パラメータ:', JSON.stringify(params, null, 2));
+      console.log('結果:', JSON.stringify(result, null, 2));
+    };
+    
+    // GeminiHandlerを初期化 (最小限のツールを使用、ログコールバック追加)
     const geminiHandler = new GeminiHandler({
       apiKey: API_KEY,
-      modelId: 'gemini-2.0-flash',
-      temperature: 0.2,
-      functionCallingMode: 'ANY',
-      tools: [readFileTool, editFileTool, attemptCompletionTool]
-    });
-    
-    // ToolExecutionManagerを初期化
-    const toolManager = new ToolExecutionManager({
       tools: [readFileTool, editFileTool, attemptCompletionTool],
-      chatHistory: chatHistory,
-      apiKey: API_KEY,
-      modelId: 'gemini-2.0-flash',
-      temperature: 0.2
+      onToolExecutionCompleted
     });
     
-    // プロンプト
-    const prompt = `以下の手順で作業を進めてください：
-1. test-sequential/config.jsonファイルの内容を${readFileTool.name}ツールを使用して読み込む
-2. ${editFileTool.name}ツールを使用してconfig.jsonのバージョンを"2.0.0"に更新する
-3. 完了したら${attemptCompletionTool.name}ツールを使用して結果を報告する
+    // プロンプト (特定のツールを指定しない)
+    const prompt = `test-sequentialディレクトリにあるconfig.jsonファイルを読み込み、バージョン番号を"1.0.0"から"2.0.0"に更新してください。
+ファイルを編集する際は、edit_fileツールを使用し、必ず以下の3つのパラメータを指定してください：
+- target_file: 編集するファイル名（例：test-sequential/config.json）
+- instructions: 何を変更するかの説明（例：バージョン番号を2.0.0に変更します）
+- code_edit: 変更するコード。既存コードは// ... existing code ...で示します。例：
+  // ... existing code ...
+  "version": "2.0.0",
+  // ... existing code ...
 
-必ず指定されたツールを順番に使用してください。`;
+タスクが完了したら教えてください。`;
 
     console.log('プロンプト:', prompt);
     
@@ -102,19 +100,18 @@ async function runSequentialToolExecutionTest() {
       ts: Date.now()
     });
     
-    // 連続ツール実行を開始（ToolExecutionManagerを使用）
-    console.log('連続ツール実行を開始します...');
-    const isCompleted = await toolManager.executeToolsWithGeminiAPI(prompt);
-    
-    console.log('ツール実行完了:', isCompleted ? '✅ 成功' : '❌ 失敗');
+    // GeminiHandlerを使用してメッセージを送信
+    console.log('メッセージ送信と連続ツール実行を開始します...');
+    const response = await geminiHandler.sendMessage(prompt, chatHistory);
+    console.log('応答:', response.text);
     
     // 会話履歴を表示
     console.log('\n===== 会話履歴 =====');
     const messages = chatHistory.getMessages();
     messages.forEach((msg, index) => {
-      console.log(`[${msg.role}]: ${Array.isArray(msg.content) 
-        ? JSON.stringify(msg.content, null, 2)
-        : msg.content}`);
+      console.log(`[${msg.role}]: ${typeof msg.content === 'string' 
+        ? msg.content 
+        : JSON.stringify(msg.content, null, 2)}`);
     });
     
     // 最終的なconfig.jsonの内容を確認
@@ -149,8 +146,8 @@ async function checkTsCompiled() {
   try {
     // dist/utils/function-tools.jsが存在するか確認
     await fs.access(path.join(__dirname, 'dist/utils/function-tools.js'));
-    // dist/utils/tool-execution-manager.jsが存在するか確認
-    await fs.access(path.join(__dirname, 'dist/utils/tool-execution-manager.js'));
+    // GeminiHandlerが存在するか確認
+    await fs.access(path.join(__dirname, 'dist/gemini/gemini-handler.js'));
     console.log('✅ TypeScriptのコンパイル結果が見つかりました');
     return true;
   } catch (error) {

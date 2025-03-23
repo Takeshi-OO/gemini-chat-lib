@@ -18,6 +18,17 @@ export interface ToolResult {
 }
 
 /**
+ * プロパティの型定義
+ */
+export interface PropertyType {
+  type: string;
+  description: string;
+  items?: {
+    type: string;
+  };
+}
+
+/**
  * ファイル読み込みツールの引数型
  */
 export interface ReadFileParams extends ToolParams {
@@ -36,7 +47,7 @@ export interface AttemptCompletionParams extends ToolParams {
 }
 
 /**
- * function callingツールの基底インターフェース
+ * 関数ツールの型定義
  */
 export interface FunctionTool {
   name: string;
@@ -44,10 +55,7 @@ export interface FunctionTool {
   execute: (params: ToolParams) => Promise<ToolResult>;
   parameters: {
     properties: {
-      [key: string]: {
-        type: string;
-        description: string;
-      }
+      [key: string]: PropertyType;
     };
     required: string[];
   };
@@ -131,7 +139,10 @@ export function createCodebaseSearchTool(workspaceRoot: string): FunctionTool {
         },
         target_directories: {
           type: 'array',
-          description: '検索対象のディレクトリを指定するグロブパターン'
+          description: '検索対象のディレクトリを指定するグロブパターン',
+          items: {
+            type: 'string'
+          }
         },
         explanation: {
           type: 'string',
@@ -365,6 +376,29 @@ export function createEditFileTool(workspaceRoot: string): FunctionTool {
     execute: async (params: ToolParams): Promise<ToolResult> => {
       try {
         const editParams = params as EditFileParams;
+        
+        // 必須パラメータの検証
+        if (!editParams.target_file) {
+          return {
+            content: '',
+            error: 'ファイル編集エラー: target_fileパラメータが指定されていません'
+          };
+        }
+        
+        if (!editParams.instructions) {
+          return {
+            content: '',
+            error: 'ファイル編集エラー: instructionsパラメータが指定されていません'
+          };
+        }
+        
+        if (!editParams.code_edit) {
+          return {
+            content: '',
+            error: 'ファイル編集エラー: code_editパラメータが指定されていません'
+          };
+        }
+        
         const filePath = path.resolve(workspaceRoot, editParams.target_file);
         const instructions = editParams.instructions;
         const codeEdit = editParams.code_edit;
@@ -409,6 +443,30 @@ function applyCodeEdit(existingContent: string, codeEdit: string): string {
   // ファイルが空の場合は単純に編集内容を返す（新規作成ケース）
   if (!existingContent.trim()) {
     return codeEdit.replace(/\/\/ \.\.\. existing code \.\.\.\n/g, '');
+  }
+
+  // JSONファイルの編集ケースを特別に処理
+  if (existingContent.trim().startsWith('{') && existingContent.trim().endsWith('}')) {
+    try {
+      // JSONの特定の行（例："version": "1.0.0"から"version": "2.0.0"）への変更を検出
+      const jsonPattern = /"([^"]+)":\s*"([^"]+)"/;
+      const match = codeEdit.match(jsonPattern);
+      
+      if (match) {
+        const key = match[1];
+        const value = match[2];
+        const existingJson = JSON.parse(existingContent);
+        
+        // キーが存在する場合、値を更新
+        if (existingJson.hasOwnProperty(key)) {
+          existingJson[key] = value;
+          return JSON.stringify(existingJson, null, 2);
+        }
+      }
+    } catch (e) {
+      // JSONパースエラーは無視して標準の方法で続行
+      console.error('JSON処理エラー:', e);
+    }
   }
 
   // 行番号付きの編集形式をチェック（例: "3 |   \"version\": \"2.0.0\",")

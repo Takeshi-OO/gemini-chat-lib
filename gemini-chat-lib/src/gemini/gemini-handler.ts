@@ -4,10 +4,13 @@ import { convertChatMessageToGemini } from "./format-converter";
 import { ApiStream } from "./stream";
 import { GeminiModelId, ModelInfo, geminiDefaultModelId, geminiModels } from "./models";
 import { ChatHistory } from "../conversation/message-history";
-import { FunctionTool } from "../utils/function-tools";
+import { FunctionTool, PropertyType } from "../utils/function-tools";
 import { ToolExecutionManager } from "../utils/tool-execution-manager";
 
 const GEMINI_DEFAULT_TEMPERATURE = 0;
+// デフォルト値として gemini-2.0-flash と ANY を設定
+const DEFAULT_MODEL_ID = 'gemini-2.0-flash';
+const DEFAULT_FUNCTION_CALLING_MODE = 'ANY';
 
 export interface GeminiHandlerOptions {
   apiKey: string;
@@ -30,11 +33,11 @@ export class GeminiHandler {
   private readonly client: GoogleGenerativeAI;
   private readonly options: {
     apiKey: string;
-    modelId?: string;
+    modelId: string;
     baseUrl?: string;
     temperature?: number;
     maxTokens?: number;
-    functionCallingMode?: 'ANY' | 'AUTO' | 'NONE';
+    functionCallingMode: 'ANY' | 'AUTO' | 'NONE';
     tools?: FunctionTool[];
     onTaskCompleted?: (result: string, command?: string) => Promise<void>;
     toolsRequiringApproval?: string[];
@@ -60,7 +63,12 @@ export class GeminiHandler {
     onToolApprovalRequired?: (toolName: string, params: any) => Promise<boolean>;
     onToolExecutionCompleted?: (toolName: string, params: any, result: any) => Promise<void>;
   }) {
-    this.options = options;
+    // デフォルト値を適用
+    this.options = {
+      ...options,
+      modelId: options.modelId || DEFAULT_MODEL_ID,
+      functionCallingMode: options.functionCallingMode || DEFAULT_FUNCTION_CALLING_MODE
+    };
     this.client = new GoogleGenerativeAI(options.apiKey);
   }
 
@@ -169,20 +177,19 @@ export class GeminiHandler {
     // システムプロンプトなしでメッセージを送信
     const systemPrompt = "";
 
-    // 関数呼び出しモードが設定されていて、ツールも提供されている場合
-    if (this.options.functionCallingMode === 'ANY' && this.options.tools && this.options.tools.length > 0) {
-      // sendMessageWithFunctionsを使用して関数呼び出しを強制
-      const allToolNames = this.options.tools.map(tool => tool.name);
+    // 常に functionCallingMode は 'ANY' を使用
+    if (this.options.tools && this.options.tools.length > 0) {
+      // 関数呼び出し定義を作成
+      const functionDefinitions = this.options.tools.map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters.properties
+      }));
       
-      // 関数呼び出し用のメッセージを作成
+      // 関数呼び出し用のメッセージを作成（allowed_function_namesは指定しない）
       const functionCallResponse = await this.sendMessageWithFunctions(
         history.getMessages(),
-        this.options.tools.map(tool => ({
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.parameters.properties
-        })),
-        allToolNames
+        functionDefinitions
       );
       
       // 応答を会話履歴に追加
@@ -276,8 +283,8 @@ export class GeminiHandler {
           parameters: tool.parameters.properties
         })) || [];
         
-        const allToolNames = this.options.tools?.map(tool => tool.name) || [];
-        return await this.sendMessageWithFunctions(messages, functions, allToolNames);
+        // allowed_function_namesは使用しない
+        return await this.sendMessageWithFunctions(messages, functions);
       }
     );
     
@@ -365,10 +372,9 @@ export class GeminiHandler {
   }
 
   /**
-   * 関数呼び出しを含むメッセージを送信する
+   * 関数呼び出しを強制的に行うメッセージを送信する
    * @param messages メッセージ履歴
-   * @param functions 関数定義
-   * @param allowedFunctionNames 許可する関数名の配列（指定した場合、これらの関数のみが呼び出される）
+   * @param functions 利用可能な関数の定義
    * @returns 応答
    */
   async sendMessageWithFunctions(
@@ -377,8 +383,7 @@ export class GeminiHandler {
       name: string;
       description?: string;
       parameters: Record<string, any>;
-    }>,
-    allowedFunctionNames?: string[]
+    }>
   ): Promise<ChatMessage> {
     try {
       const model = this.client.getGenerativeModel(
@@ -394,31 +399,31 @@ export class GeminiHandler {
       );
 
       // 関数定義をツールとして設定
-      const tools = functions.map((fn) => ({
-        functionDeclarations: [
-          {
-            name: fn.name,
-            description: fn.description || "",
-            parameters: {
-              type: SchemaType.OBJECT,
-              properties: typeof fn.parameters === 'object' ? fn.parameters : {},
-            } as FunctionDeclarationSchema,
-          },
-        ],
-      }));
+      const tools = functions.map((fn) => {
+        // ツールの名前を使って元のツール定義を探す
+        const originalTool = this.options.tools?.find(t => t.name === fn.name);
+        
+        return {
+          functionDeclarations: [
+            {
+              name: fn.name,
+              description: fn.description || "",
+              parameters: {
+                type: SchemaType.OBJECT,
+                properties: originalTool 
+                  ? convertParametersFormat(originalTool.parameters.properties)
+                  : (typeof fn.parameters === 'object' ? fn.parameters : {}),
+                required: this.getFunctionRequiredParams(fn.name)
+              } as FunctionDeclarationSchema,
+            },
+          ],
+        };
+      });
 
-      // functionCallingConfigの設定
-      const functionCallingConfig: {
-        mode: typeof FunctionCallingMode.ANY;
-        allowed_function_names?: string[];
-      } = {
+      // functionCallingConfigの設定（allowed_function_namesは使用しない）
+      const functionCallingConfig = {
         mode: FunctionCallingMode.ANY
       };
-
-      // 許可された関数名が指定されている場合、設定に追加
-      if (allowedFunctionNames && allowedFunctionNames.length > 0) {
-        functionCallingConfig.allowed_function_names = allowedFunctionNames;
-      }
 
       const result = await model.generateContent({
         contents: messages.map((msg) => convertChatMessageToGemini(msg)),
@@ -628,6 +633,20 @@ export class GeminiHandler {
       throw error;
     }
   }
+
+  /**
+   * 関数の必須パラメータリストを取得する
+   * @param functionName 関数名
+   * @returns 必須パラメータの配列
+   */
+  private getFunctionRequiredParams(functionName: string): string[] {
+    if (!this.options.tools) return [];
+    
+    const tool = this.options.tools.find(t => t.name === functionName);
+    if (!tool) return [];
+    
+    return tool.parameters.required || [];
+  }
 }
 
 /**
@@ -635,7 +654,7 @@ export class GeminiHandler {
  * @param properties パラメータのプロパティ
  * @returns 変換されたプロパティ
  */
-function convertParametersFormat(properties: Record<string, { type: string; description: string }>): any {
+function convertParametersFormat(properties: Record<string, PropertyType>): any {
   const result: Record<string, any> = {};
   
   for (const [key, value] of Object.entries(properties)) {
@@ -643,29 +662,36 @@ function convertParametersFormat(properties: Record<string, { type: string; desc
     let type: string;
     switch (value.type.toLowerCase()) {
       case 'string':
-        type = 'STRING';
+        type = SchemaType.STRING;
         break;
       case 'integer':
       case 'number':
-        type = 'NUMBER';
+        type = SchemaType.NUMBER;
         break;
       case 'boolean':
-        type = 'BOOLEAN';
+        type = SchemaType.BOOLEAN;
         break;
       case 'array':
-        type = 'ARRAY';
+        type = SchemaType.ARRAY;
         break;
       case 'object':
-        type = 'OBJECT';
+        type = SchemaType.OBJECT;
         break;
       default:
-        type = 'STRING';
+        type = SchemaType.STRING;
     }
     
     result[key] = {
       type,
       description: value.description
     };
+    
+    // itemsフィールドがある場合は追加
+    if (value.items) {
+      result[key].items = {
+        type: value.items.type.toUpperCase()
+      };
+    }
   }
   
   return result;

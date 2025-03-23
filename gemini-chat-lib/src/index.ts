@@ -51,11 +51,15 @@ export {
   CodebaseSearchParams,
   ListDirParams,
   AskFollowupQuestionParams,
+  EditFileParams,
+  WriteToFileParams,
   createTools,
   createReadFileTool,
   createCodebaseSearchTool,
   createListDirTool,
-  createAskFollowupQuestionTool
+  createAskFollowupQuestionTool,
+  createEditFileTool,
+  createWriteToFileTool
 } from "./utils/function-tools";
 
 // スライディングウィンドウ

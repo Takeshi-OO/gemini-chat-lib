@@ -279,6 +279,201 @@ export function createAskFollowupQuestionTool(): FunctionTool {
 }
 
 /**
+ * ファイル編集ツールの引数型
+ */
+export interface EditFileParams extends ToolParams {
+  target_file: string;
+  instructions: string;
+  code_edit: string;
+}
+
+/**
+ * ファイル編集ツール
+ * @param workspaceRoot ワークスペースのルートパス
+ * @returns ファイル編集ツール定義
+ */
+export function createEditFileTool(workspaceRoot: string): FunctionTool {
+  return {
+    name: 'edit_file',
+    description: '既存のファイルに編集を提案します。\n\nこれは、より単純なモデルによって素早く適用される編集です。どのような編集なのかを明確にしながら、変更されないコードは最小限にする必要があります。\n編集を書く際には、編集を順番に指定し、編集された行の間の変更されないコードを「// ... existing code ...」という特別なコメントで表現します。',
+    parameters: {
+      properties: {
+        target_file: {
+          type: 'string',
+          description: '編集対象のファイルパス。常に最初の引数としてファイルパスを指定してください。ワークスペースのルートからの相対パスまたは絶対パスを使用できます。絶対パスが指定された場合、そのままの形で保持されます。'
+        },
+        instructions: {
+          type: 'string',
+          description: '編集の内容を説明する一文。これはより単純なモデルが編集を適用する際に役立ちます。何をしようとしているのかを一人称で説明してください。以前のメッセージで言ったことを繰り返さないでください。これを使って編集の不確実性を明確にします。'
+        },
+        code_edit: {
+          type: 'string',
+          description: '編集したいコードの正確な行だけを指定してください。変更されないコードは決して指定しないでください。代わりに、すべての変更されないコードを「// ... existing code ...」のようなコメントで表してください。'
+        }
+      },
+      required: ['target_file', 'instructions', 'code_edit']
+    },
+    execute: async (params: ToolParams): Promise<ToolResult> => {
+      try {
+        const editParams = params as EditFileParams;
+        const filePath = path.resolve(workspaceRoot, editParams.target_file);
+        const instructions = editParams.instructions;
+        const codeEdit = editParams.code_edit;
+        
+        // 既存のファイル内容を取得
+        const fs = require('fs').promises;
+        let existingContent = '';
+        try {
+          existingContent = await fs.readFile(filePath, 'utf8');
+        } catch (error) {
+          // ファイルが存在しない場合は新規作成
+          await fs.mkdir(path.dirname(filePath), { recursive: true });
+          existingContent = '';
+        }
+        
+        // コード編集を適用
+        const updatedContent = applyCodeEdit(existingContent, codeEdit);
+        
+        // ファイルに書き込み
+        await fs.writeFile(filePath, updatedContent, 'utf8');
+        
+        return { 
+          content: `ファイル "${editParams.target_file}" を正常に編集しました。\n\n指示: ${instructions}`
+        };
+      } catch (error) {
+        return {
+          content: '',
+          error: `ファイル編集エラー: ${error instanceof Error ? error.message : String(error)}`
+        };
+      }
+    }
+  };
+}
+
+/**
+ * コード編集を既存のコードに適用する
+ * @param existingContent 既存のファイル内容
+ * @param codeEdit 適用する編集内容
+ * @returns 更新されたファイル内容
+ */
+function applyCodeEdit(existingContent: string, codeEdit: string): string {
+  // ファイルが空の場合は単純に編集内容を返す（新規作成ケース）
+  if (!existingContent.trim()) {
+    return codeEdit.replace(/\/\/ \.\.\. existing code \.\.\.\n/g, '');
+  }
+  
+  const existingLines = existingContent.split('\n');
+  const editLines = codeEdit.split('\n');
+  
+  let result: string[] = [];
+  let existingIndex = 0;
+  
+  for (let i = 0; i < editLines.length; i++) {
+    const line = editLines[i];
+    
+    // 既存コードのプレースホルダーを処理
+    if (line.trim() === '// ... existing code ...' || line.trim() === '/* ... existing code ... */') {
+      // 次の編集行またはファイル終端までスキップ
+      const nextEditLine = editLines[i + 1]?.trim();
+      if (!nextEditLine) {
+        // 残りの既存コードをすべて追加
+        result = result.concat(existingLines.slice(existingIndex));
+        break;
+      }
+      
+      // 次の編集行に一致する既存コード行を探す
+      let found = false;
+      for (let j = existingIndex; j < existingLines.length; j++) {
+        if (existingLines[j].trim() === nextEditLine) {
+          // 既存コード行をそのまま追加
+          result = result.concat(existingLines.slice(existingIndex, j));
+          existingIndex = j;
+          found = true;
+          break;
+        }
+      }
+      
+      // 一致する行が見つからない場合、編集内容に問題があるため、元のコンテンツをそのまま返す
+      if (!found && nextEditLine) {
+        console.error('Failed to find matching line for edit:', nextEditLine);
+        return existingContent;
+      }
+    } else {
+      // 編集行を追加
+      result.push(line);
+      
+      // 既存コードで同じ行を探して次の行にインデックスを進める
+      if (existingLines[existingIndex]?.trim() === line.trim()) {
+        existingIndex++;
+      }
+    }
+  }
+  
+  return result.join('\n');
+}
+
+/**
+ * ファイル書き込みツールの引数型
+ */
+export interface WriteToFileParams extends ToolParams {
+  path: string;
+  content: string;
+  line_count: number;
+}
+
+/**
+ * ファイル書き込みツール
+ * @param workspaceRoot ワークスペースのルートパス
+ * @returns ファイル書き込みツール定義
+ */
+export function createWriteToFileTool(workspaceRoot: string): FunctionTool {
+  return {
+    name: 'write_to_file',
+    description: '新しいファイルを作成するか、既存のファイルを完全に上書きします。ファイルが存在しない場合は、必要なディレクトリも作成されます。',
+    parameters: {
+      properties: {
+        path: {
+          type: 'string',
+          description: '書き込み先のファイルパス（ワークスペースのルートからの相対パス）'
+        },
+        content: {
+          type: 'string',
+          description: 'ファイルに書き込む内容'
+        },
+        line_count: {
+          type: 'integer',
+          description: '書き込む内容の行数。正確に計算してください。'
+        }
+      },
+      required: ['path', 'content', 'line_count']
+    },
+    execute: async (params: ToolParams): Promise<ToolResult> => {
+      try {
+        const writeParams = params as WriteToFileParams;
+        const filePath = path.resolve(workspaceRoot, writeParams.path);
+        const content = writeParams.content;
+        
+        // ディレクトリを作成（必要な場合）
+        const fs = require('fs').promises;
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        
+        // ファイルに書き込み
+        await fs.writeFile(filePath, content, 'utf8');
+        
+        return { 
+          content: `ファイル "${writeParams.path}" に内容を正常に書き込みました。`
+        };
+      } catch (error) {
+        return {
+          content: '',
+          error: `ファイル書き込みエラー: ${error instanceof Error ? error.message : String(error)}`
+        };
+      }
+    }
+  };
+}
+
+/**
  * ツールセットを作成する
  * @param workspaceRoot ワークスペースのルートパス
  * @returns ツールの配列
@@ -288,6 +483,8 @@ export function createTools(workspaceRoot: string): FunctionTool[] {
     createReadFileTool(workspaceRoot),
     createCodebaseSearchTool(workspaceRoot),
     createListDirTool(workspaceRoot),
-    createAskFollowupQuestionTool()
+    createAskFollowupQuestionTool(),
+    createEditFileTool(workspaceRoot),
+    createWriteToFileTool(workspaceRoot)
   ];
 } 

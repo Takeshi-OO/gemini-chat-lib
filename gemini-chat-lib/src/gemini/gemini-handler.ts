@@ -151,11 +151,15 @@ export class GeminiHandler {
    * メッセージを送信し、ストリーミングせずに応答を受け取る
    * @param message メッセージ内容
    * @param conversation 会話履歴（オプション）
+   * @param options 追加オプション（省略可能）
    * @returns 応答テキストと使用トークン情報
    */
   async sendMessage(
     message: string,
-    conversation?: ChatHistory
+    conversation?: ChatHistory,
+    options?: {
+      onFollowupQuestion?: (question: string) => Promise<string>;
+    }
   ): Promise<{ text: string; usage: { input: number; output: number } }> {
     // 会話履歴が指定されていない場合は新しく作成
     const history = conversation || new ChatHistory();
@@ -194,6 +198,67 @@ export class GeminiHandler {
       
       // 応答を会話履歴に追加
       history.addMessage(functionCallResponse);
+      
+      // フォローアップ質問があるかチェック
+      if (options?.onFollowupQuestion && 
+          Array.isArray(functionCallResponse.content) && 
+          functionCallResponse.content.some(part => 
+            part.type === 'function_call' && 
+            'function_call' in part && 
+            part.function_call?.name === 'ask_followup_question')) {
+        
+        // フォローアップ質問を抽出
+        const functionCall = functionCallResponse.content.find(part => 
+          part.type === 'function_call' && 
+          'function_call' in part && 
+          part.function_call?.name === 'ask_followup_question'
+        );
+        
+        if (functionCall && 'function_call' in functionCall && functionCall.function_call) {
+          try {
+            // フォローアップ質問を取得
+            const question = functionCall.function_call.arguments.question;
+            
+            // ユーザーにフォローアップ質問を投げる
+            const answer = await options.onFollowupQuestion(question);
+            
+            // 回答をチャット履歴に追加
+            history.addMessage({
+              role: 'user',
+              content: [
+                {
+                  type: 'function_response',
+                  function_response: {
+                    name: 'ask_followup_question',
+                    response: { content: answer }
+                  }
+                }
+              ],
+              ts: Date.now()
+            });
+            
+            // 再帰的に処理を続行（新しい会話履歴で）
+            return this.sendMessage('', history, options);
+          } catch (error) {
+            // フォローアップ質問の処理中にエラーが発生した場合
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error('フォローアップ質問エラー:', errorMessage);
+            
+            // エラーメッセージを会話履歴に追加
+            history.addMessage({
+              role: 'user',
+              content: `フォローアップ質問の処理中にエラーが発生しました: ${errorMessage}`,
+              ts: Date.now()
+            });
+            
+            // エラーからの回復を試みる
+            return {
+              text: `フォローアップ質問の処理に失敗しました: ${errorMessage}`,
+              usage: { input: 0, output: 0 }
+            };
+          }
+        }
+      }
       
       // 連続ツール実行を処理
       const result = await this.handleSequentialToolExecution(history, functionCallResponse);

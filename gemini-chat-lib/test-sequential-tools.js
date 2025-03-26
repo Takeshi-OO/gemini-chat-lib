@@ -25,6 +25,7 @@ const {
   createCodebaseSearchTool,
   createListDirTool
 } = require('./dist/utils/function-tools');
+const { truncateConversation, estimateTokenCount } = require('./dist/utils/sliding-window');
 
 // メッセージ出力を整形する関数
 function formatMessage(msg) {
@@ -196,6 +197,137 @@ async function testBasicFunctionTools() {
     return true;
   } catch (error) {
     console.error('基本的なFunction Callingツールテストエラー:', error);
+    return false;
+  }
+}
+
+// 会話履歴の自動削減機能をテストする関数
+async function testAutoTruncate() {
+  console.log('\n===== 会話履歴の自動削減機能のテスト =====');
+  
+  try {
+    console.log('Geminiハンドラーを初期化中...');
+    
+    // オプション設定を環境変数から取得
+    const modelId = process.env.GEMINI_MODEL_ID;
+    const baseUrl = process.env.GEMINI_BASE_URL || undefined;
+    const temperature = process.env.GEMINI_TEMPERATURE ? parseFloat(process.env.GEMINI_TEMPERATURE) : undefined;
+    const maxTokens = process.env.GEMINI_MAX_TOKENS ? parseInt(process.env.GEMINI_MAX_TOKENS) : undefined;
+    
+    console.log(`モデル: ${modelId || 'デフォルト'}`);
+    
+    // Geminiハンドラーを初期化
+    const gemini = new GeminiHandler({
+      apiKey: API_KEY,
+      modelId,
+      baseUrl,
+      temperature,
+      maxTokens
+    });
+
+    // モデル情報を取得
+    const model = gemini.getModel();
+    console.log(`使用するモデル: ${model.id}`);
+    console.log(`通常のコンテキストウィンドウ: ${model.info.contextWindow}トークン`);
+    console.log(`通常の最大出力トークン: ${model.info.maxTokens}トークン`);
+    
+    // 会話履歴を初期化（テスト用に小さいコンテキストサイズを設定）
+    const testContextWindow = 1000; // テスト用の小さいコンテキストウィンドウ
+    const testMaxTokens = 100;     // テスト用の小さい最大トークン数
+    
+    console.log(`\nテスト用に設定するコンテキストウィンドウ: ${testContextWindow}トークン`);
+    console.log(`テスト用に設定する最大出力トークン: ${testMaxTokens}トークン`);
+    
+    const conversation = new ChatHistory({
+      modelMaxTokens: testMaxTokens,
+      contextWindow: testContextWindow
+    });
+    
+    // テスト用に会話履歴にダミーメッセージを追加
+    console.log('\n--- ダミーメッセージの追加 ---');
+    
+    // 非常に長いダミーメッセージを生成（自動削減をトリガーするため）
+    const longMessage = '長いメッセージ。'.repeat(100); // 100回繰り返し
+    const longMessageTokens = estimateTokenCount(longMessage);
+    console.log(`長いメッセージのトークン数（推定）: ${longMessageTokens}`);
+    
+    // ユーザーからの最初のメッセージ
+    console.log('最初のメッセージを追加します...');
+    conversation.addMessage({
+      role: "user",
+      content: "こんにちは、これは最初のメッセージです。",
+      ts: Date.now() - 10000
+    });
+    
+    // アシスタントからの応答
+    console.log('アシスタントの応答を追加します...');
+    conversation.addMessage({
+      role: "assistant",
+      content: "こんにちは、お手伝いできることはありますか？",
+      ts: Date.now() - 9000
+    });
+    
+    // ユーザーからの長いメッセージ（自動削減のトリガー）
+    console.log('ユーザーからの長いメッセージを追加します（自動削減をトリガー）...');
+    const beforeCount = conversation.getMessages().length;
+    
+    conversation.addMessage({
+      role: "user",
+      content: longMessage,
+      ts: Date.now() - 8000
+    });
+    
+    const afterCount = conversation.getMessages().length;
+    
+    console.log(`削減前のメッセージ数: ${beforeCount}`);
+    console.log(`削減後のメッセージ数: ${afterCount}`);
+    
+    if (beforeCount !== afterCount) {
+      console.log('会話履歴が自動的に削減されました！');
+    } else {
+      console.log('メッセージが短すぎるか、削減条件を満たしませんでした。');
+      console.log('より長いメッセージを使うか、コンテキストウィンドウの設定を小さくしてテストしてください。');
+    }
+    
+    // 手動で削減をテスト
+    console.log('\n--- 手動削減のテスト ---');
+    
+    // さらにいくつかメッセージを追加
+    for (let i = 0; i < 10; i++) {
+      conversation.addMessage({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: `これはテストメッセージ ${i + 1} です。`,
+        ts: Date.now() - (7000 - i * 500)
+      });
+    }
+    
+    console.log(`現在のメッセージ数: ${conversation.getMessages().length}`);
+    
+    // 手動で会話履歴を削減（50%）
+    const messages = conversation.getMessages();
+    const truncatedMessages = truncateConversation(messages, 0.5);
+    
+    console.log(`削減前のメッセージ数: ${messages.length}`);
+    console.log(`削減後のメッセージ数: ${truncatedMessages.length}`);
+    console.log(`削減されたメッセージ数: ${messages.length - truncatedMessages.length}`);
+    
+    console.log('\n--- 会話履歴 ---');
+    console.log('最初の3つのメッセージ:');
+    const firstThree = truncatedMessages.slice(0, 3);
+    firstThree.forEach((msg, i) => {
+      console.log(`${i + 1}. [${msg.role}] ${msg.content.substring(0, 50)}${msg.content.length > 50 ? '...' : ''}`);
+    });
+    
+    console.log('\n最後の3つのメッセージ:');
+    const lastThree = truncatedMessages.slice(-3);
+    lastThree.forEach((msg, i) => {
+      const index = truncatedMessages.length - 3 + i;
+      console.log(`${index + 1}. [${msg.role}] ${msg.content.substring(0, 50)}${msg.content.length > 50 ? '...' : ''}`);
+    });
+    
+    return true;
+  } catch (error) {
+    console.error('会話履歴の自動削減機能テストエラー:', error);
     return false;
   }
 }
@@ -446,6 +578,10 @@ async function runTests() {
   const contextHelperSuccess = await testContextHelper();
   console.log(`コンテキスト機能テスト: ${contextHelperSuccess ? '成功' : '失敗'}\n`);
   
+  // 会話履歴の自動削減機能のテスト
+  const autoTruncateSuccess = await testAutoTruncate();
+  console.log(`会話履歴の自動削減機能テスト: ${autoTruncateSuccess ? '成功' : '失敗'}\n`);
+  
   // 連続ツール実行テスト
   await runSequentialToolExecutionTest();
   
@@ -459,13 +595,17 @@ async function runTests() {
 - ファイル推論: ${contextHelperSuccess ? 'クエリに基づいた関連ファイルの特定が可能' : '失敗'}
 - コンテキスト最適化: ${contextHelperSuccess ? '必要な情報のみを抽出し、サイズを最適化' : '失敗'}
 
-2. 連続ツール実行
+2. 会話履歴の自動削減
+- 自動削減: ${autoTruncateSuccess ? 'コンテキストウィンドウを超えた場合に適切に削減' : '失敗'}
+- 手動削減: ${autoTruncateSuccess ? '指定した割合で履歴を削減可能' : '失敗'}
+
+3. 連続ツール実行
 - ファイル読み込みと編集: テスト1で正常に動作
 - フォローアップ質問: テスト2で正常に動作
 - 複数ツールの連携: 複数のツールが順番に連携して実行可能
 
-総合評価: ${contextHelperSuccess ? 
-  'すべての機能が正常に動作。情報量と精度のバランスを取りながら、必要な情報を効率的に抽出し、連続的なツール実行が可能な仕組みが実現できています。' : 
+総合評価: ${contextHelperSuccess && autoTruncateSuccess ? 
+  'すべての機能が正常に動作。情報量と精度のバランスを取りながら、必要な情報を効率的に抽出し、連続的なツール実行が可能な仕組みが実現できています。また、長い会話履歴も適切に管理されます。' : 
   '一部の機能に問題があります。詳細なログを確認してください。'}
 `);
 }

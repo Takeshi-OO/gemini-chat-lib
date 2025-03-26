@@ -2,23 +2,21 @@ import { GoogleGenerativeAI, FunctionDeclarationSchema, FunctionCallingMode, Sch
 import { ChatMessage } from "../conversation/types";
 import { convertChatMessageToGemini } from "./format-converter";
 import { ApiStream } from "./stream";
-import { GeminiModelId, ModelInfo, geminiDefaultModelId, geminiModels } from "./models";
+import { geminiModels } from "./models";
 import { ChatHistory } from "../conversation/message-history";
 import { FunctionTool, PropertyType } from "../utils/function-tools";
 import { ToolExecutionManager } from "../utils/tool-execution-manager";
 
 const GEMINI_DEFAULT_TEMPERATURE = 0;
-// デフォルト値として gemini-2.0-flash と ANY を設定
-const DEFAULT_MODEL_ID = 'gemini-2.0-flash';
+// 固定モデルとFunctionCallingMode
+const GEMINI_MODEL_ID = 'gemini-2.0-flash-001';
 const DEFAULT_FUNCTION_CALLING_MODE = 'ANY';
 
 export interface GeminiHandlerOptions {
   apiKey: string;
-  modelId?: GeminiModelId;
   baseUrl?: string;
   temperature?: number;
   maxTokens?: number;
-  functionCallingMode?: 'ANY' | 'AUTO' | 'NONE';
   tools?: FunctionTool[];
   onTaskCompleted?: (result: string, command?: string) => Promise<void>;
   toolsRequiringApproval?: string[];
@@ -33,11 +31,9 @@ export class GeminiHandler {
   private readonly client: GoogleGenerativeAI;
   private readonly options: {
     apiKey: string;
-    modelId: string;
     baseUrl?: string;
     temperature?: number;
     maxTokens?: number;
-    functionCallingMode: 'ANY' | 'AUTO' | 'NONE';
     tools?: FunctionTool[];
     onTaskCompleted?: (result: string, command?: string) => Promise<void>;
     toolsRequiringApproval?: string[];
@@ -50,26 +46,20 @@ export class GeminiHandler {
    * コンストラクタ
    * @param options オプション
    */
-  constructor(options: {
-    apiKey: string;
-    modelId?: string;
-    baseUrl?: string;
-    temperature?: number;
-    maxTokens?: number;
-    functionCallingMode?: 'ANY' | 'AUTO' | 'NONE';
-    tools?: FunctionTool[];
-    onTaskCompleted?: (result: string, command?: string) => Promise<void>;
-    toolsRequiringApproval?: string[];
-    onToolApprovalRequired?: (toolName: string, params: any) => Promise<boolean>;
-    onToolExecutionCompleted?: (toolName: string, params: any, result: any) => Promise<void>;
-  }) {
-    // デフォルト値を適用
-    this.options = {
-      ...options,
-      modelId: options.modelId || DEFAULT_MODEL_ID,
-      functionCallingMode: options.functionCallingMode || DEFAULT_FUNCTION_CALLING_MODE
-    };
+  constructor(options: GeminiHandlerOptions) {
+    this.options = { ...options };
     this.client = new GoogleGenerativeAI(options.apiKey);
+  }
+
+  /**
+   * モデル情報を取得する
+   * @returns モデル情報
+   */
+  getModel() {
+    return {
+      id: GEMINI_MODEL_ID,
+      info: geminiModels[GEMINI_MODEL_ID]
+    };
   }
 
   /**
@@ -105,7 +95,7 @@ export class GeminiHandler {
     };
 
     // 関数呼び出しモードが設定されていて、ツールも提供されている場合
-    if (this.options.functionCallingMode && this.options.tools && this.options.tools.length > 0) {
+    if (this.options.tools && this.options.tools.length > 0) {
       // ツールの定義を作成
       const tools = this.options.tools.map((tool) => ({
         functionDeclarations: [
@@ -125,7 +115,7 @@ export class GeminiHandler {
       generateContentOptions.tools = tools;
       generateContentOptions.toolConfig = {
         functionCallingConfig: {
-          mode: this.options.functionCallingMode,
+          mode: DEFAULT_FUNCTION_CALLING_MODE,
         },
       };
     }
@@ -391,20 +381,6 @@ export class GeminiHandler {
   }
 
   /**
-   * 現在のモデル情報を取得
-   * @returns モデルID、情報を含むオブジェクト
-   */
-  getModel() {
-    const modelId = (this.options.modelId || geminiDefaultModelId) as GeminiModelId;
-    const modelInfo = geminiModels[modelId] || geminiModels[geminiDefaultModelId];
-    
-    return {
-      id: modelId,
-      info: modelInfo,
-    };
-  }
-
-  /**
    * プロンプトを送信し、応答を受け取る（ストリームなし）
    * @param prompt プロンプト
    * @returns 応答テキスト
@@ -543,17 +519,12 @@ export class GeminiHandler {
    * @param messages メッセージ履歴
    * @param functionName 関数名
    * @param functionResponse 関数の実行結果
-   * @param functionCallingConfig 関数呼び出し設定（省略時はANYモード）
    * @returns 応答
    */
   async sendFunctionResponse(
     messages: ChatMessage[],
     functionName: string,
-    functionResponse: any,
-    functionCallingConfig?: {
-      mode: typeof FunctionCallingMode.ANY | typeof FunctionCallingMode.AUTO | typeof FunctionCallingMode.NONE;
-      allowed_function_names?: string[];
-    }
+    functionResponse: any
   ): Promise<ChatMessage> {
     try {
       // 関数の実行結果をメッセージに追加
@@ -584,10 +555,12 @@ export class GeminiHandler {
         }
       );
 
-      // ツールとツール設定
-      const toolConfig = functionCallingConfig ? {
-        functionCallingConfig
-      } : undefined;
+      // 常にANYモードを使用
+      const toolConfig = {
+        functionCallingConfig: {
+          mode: FunctionCallingMode.ANY
+        }
+      };
 
       const tools = this.options.tools?.map(tool => ({
         functionDeclarations: [

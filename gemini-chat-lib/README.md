@@ -1,12 +1,12 @@
 # Gemini Chat Library
 
-Gemini ProモデルによるチャットとFunction Callingを実装するためのライブラリです。
+Gemini 2.0 Flash モデルによるチャットとFunction Callingを実装するためのシンプルなライブラリです。
 
 ## 機能一覧
 
-- Gemini APIとの連携
+- Gemini APIとの連携（gemini-2.0-flash-001モデル専用）
 - 会話履歴の管理
-- Function Callingサポート
+- Function Callingサポート（FunctionCallingMode.ANYを使用）
 - ファイル操作やコードベース検索などのツール提供
 - 連続ツール実行（パイプライン処理）
 
@@ -34,7 +34,6 @@ npm install gemini-chat-lib
 GEMINI_API_KEY=your_api_key_here
 
 # オプション
-GEMINI_MODEL_ID=gemini-1.5-pro-002
 GEMINI_BASE_URL=
 GEMINI_TEMPERATURE=0.7
 GEMINI_MAX_TOKENS=8192
@@ -50,7 +49,6 @@ const { GeminiHandler, ChatHistory } = require('gemini-chat-lib');
 // Gemini Handlerの初期化
 const geminiHandler = new GeminiHandler({
   apiKey: 'YOUR_GEMINI_API_KEY',
-  modelId: 'gemini-1.5-pro',
   temperature: 0.2
 });
 
@@ -80,9 +78,7 @@ const WORKSPACE_ROOT = process.cwd();
 // Gemini Handlerの初期化（Function Calling対応）
 const geminiHandler = new GeminiHandler({
   apiKey: 'YOUR_GEMINI_API_KEY',
-  modelId: 'gemini-1.5-pro',
   temperature: 0.2,
-  functionCallingMode: 'ANY', // ANYはFunction Callingを強制
   tools: createTools(WORKSPACE_ROOT) // 利用可能なツールセットを提供
 });
 
@@ -114,9 +110,7 @@ const {
 // Gemini Handlerの初期化（連続ツール実行対応）
 const geminiHandler = new GeminiHandler({
   apiKey: 'YOUR_GEMINI_API_KEY',
-  modelId: 'gemini-1.5-pro',
   temperature: 0.2,
-  functionCallingMode: 'ANY',
   tools: createTools(WORKSPACE_ROOT),
   
   // ユーザー承認が必要なツールを指定
@@ -152,15 +146,6 @@ async function sendMessage(message) {
 // 例: 連続したツール実行を伴うタスク
 sendMessage('package.jsonファイルのバージョンを1.0.1に更新してください');
 ```
-
-### 連続ツール実行の流れ
-
-1. AIがユーザーの要望を理解し、適切なツールを選択（例: codebase_search）
-2. ツールの実行結果を受け取り、次に必要なツールを判断（例: read_file）
-3. さらに次のステップに進む（例: edit_file）
-4. 最終的にタスク完了（attempt_completion）で処理を終了
-
-この機能により、ユーザーは複雑なタスクを単一の指示で実行でき、AIが適切なツールを連続して使用して効率的に処理を行います。
 
 ## サンプルコード
 

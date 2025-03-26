@@ -14,9 +14,7 @@ export {
 export { GeminiHandler } from "./gemini/gemini-handler";
 export { 
   convertChatMessageToGemini, 
-  convertChatContentToGeminiParts,
-  convertAnthropicMessageToGemini,
-  convertAnthropicContentToGemini
+  convertChatContentToGeminiParts
 } from "./gemini/format-converter";
 export { 
   GeminiModelId, 

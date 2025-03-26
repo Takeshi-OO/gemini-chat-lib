@@ -1,7 +1,7 @@
 {
   "name": "gemini-chat-lib",
-  "version": "0.1.0",
-  "description": "Google Gemini AIモデルと簡単にチャットするためのTypeScriptライブラリ",
+  "version": "0.2.0",
+  "description": "Google Gemini 2.0 Flash AIモデルに特化したシンプルなTypeScriptライブラリ",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "dependencies": {
@@ -22,7 +22,8 @@
     "ai",
     "chat",
     "google",
-    "generative-ai"
+    "generative-ai",
+    "gemini-2.0-flash"
   ],
   "author": "",
   "license": "MIT",

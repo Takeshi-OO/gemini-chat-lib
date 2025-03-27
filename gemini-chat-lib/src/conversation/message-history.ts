@@ -3,67 +3,14 @@ import { truncateConversationIfNeeded } from "../utils/sliding-window";
 
 /**
  * 会話履歴を管理するクラス
- * 元のRoo-Codeのコードを参考に、シンプル化したもの
- */
-export class MessageHistory {
-  private readonly messages: Record<string, Record<number, ClineMessage>>;
-  private readonly list: Record<string, number[]>;
-
-  constructor() {
-    this.messages = {};
-    this.list = {};
-  }
-
-  /**
-   * 会話履歴にメッセージを追加する
-   * @param taskId タスクID
-   * @param message 追加するメッセージ
-   */
-  public add(taskId: string, message: ClineMessage) {
-    if (!this.messages[taskId]) {
-      this.messages[taskId] = {};
-    }
-
-    this.messages[taskId][message.ts] = message;
-
-    if (!this.list[taskId]) {
-      this.list[taskId] = [];
-    }
-
-    this.list[taskId].push(message.ts);
-  }
-
-  /**
-   * 会話履歴のメッセージを更新する
-   * @param taskId タスクID
-   * @param message 更新するメッセージ
-   */
-  public update(taskId: string, message: ClineMessage) {
-    if (this.messages[taskId][message.ts]) {
-      this.messages[taskId][message.ts] = message;
-    }
-  }
-
-  /**
-   * 会話履歴のメッセージを取得する
-   * @param taskId タスクID
-   * @returns メッセージの配列
-   */
-  public getMessages(taskId: string): ClineMessage[] {
-    return (this.list[taskId] ?? [])
-      .map((ts) => this.messages[taskId][ts])
-      .filter(Boolean);
-  }
-}
-
-/**
- * 新しいチャットメッセージ履歴管理クラス
- * より単純化されたインターフェースを提供
+ * タスクID別のメッセージ管理と一般的なチャット履歴機能を提供
  */
 export class ChatHistory {
   private messages: ChatMessage[] = [];
   private modelMaxTokens: number = 8192;  // デフォルト値
   private contextWindow: number = 131072; // デフォルト値
+  private readonly taskMessages: Record<string, Record<number, ClineMessage>>;
+  private readonly taskList: Record<string, number[]>;
 
   /**
    * コンストラクタ
@@ -74,6 +21,8 @@ export class ChatHistory {
       this.modelMaxTokens = options.modelMaxTokens || this.modelMaxTokens;
       this.contextWindow = options.contextWindow || this.contextWindow;
     }
+    this.taskMessages = {};
+    this.taskList = {};
   }
 
   /**
@@ -147,5 +96,68 @@ export class ChatHistory {
     }
 
     return false;
+  }
+
+  /**
+   * タスク別会話履歴にメッセージを追加する
+   * @param taskId タスクID
+   * @param message 追加するメッセージ
+   */
+  public addTaskMessage(taskId: string, message: ClineMessage) {
+    if (!this.taskMessages[taskId]) {
+      this.taskMessages[taskId] = {};
+    }
+
+    this.taskMessages[taskId][message.ts] = message;
+
+    if (!this.taskList[taskId]) {
+      this.taskList[taskId] = [];
+    }
+
+    this.taskList[taskId].push(message.ts);
+  }
+
+  /**
+   * タスク別会話履歴のメッセージを更新する
+   * @param taskId タスクID
+   * @param message 更新するメッセージ
+   */
+  public updateTaskMessage(taskId: string, message: ClineMessage) {
+    if (this.taskMessages[taskId] && this.taskMessages[taskId][message.ts]) {
+      this.taskMessages[taskId][message.ts] = message;
+    }
+  }
+
+  /**
+   * タスク別会話履歴のメッセージを取得する
+   * @param taskId タスクID
+   * @returns メッセージの配列
+   */
+  public getTaskMessages(taskId: string): ClineMessage[] {
+    return (this.taskList[taskId] ?? [])
+      .map((ts) => this.taskMessages[taskId][ts])
+      .filter(Boolean);
+  }
+
+  /**
+   * タスク履歴を持つすべてのタスクIDを取得する
+   * @returns タスクIDの配列
+   */
+  public getAllTaskIds(): string[] {
+    return Object.keys(this.taskList);
+  }
+
+  /**
+   * 特定のタスクの履歴をクリアする
+   * @param taskId タスクID
+   */
+  public clearTaskHistory(taskId: string): void {
+    if (this.taskMessages[taskId]) {
+      delete this.taskMessages[taskId];
+    }
+    
+    if (this.taskList[taskId]) {
+      delete this.taskList[taskId];
+    }
   }
 } 

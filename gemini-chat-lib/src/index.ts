@@ -1,5 +1,5 @@
 // 会話履歴管理
-export { ChatHistory, MessageHistory } from "./conversation/message-history";
+export { ChatHistory } from "./conversation/message-history";
 export { 
   ChatMessage, 
   ChatContent, 

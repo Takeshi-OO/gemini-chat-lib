@@ -443,28 +443,6 @@ async function testTaskMessages() {
   }
 }
 
-// 連続ツール実行をシミュレートするテスト関数
-async function runSequentialToolExecutionTest() {
-  try {
-    await setup();
-    console.log('\n===== 連続ツール実行テスト開始 =====');
-    
-    // テスト1: ファイル読み込みと編集の連続実行
-    await runFileEditTest();
-    
-    // テスト2: フォローアップ質問の連続実行
-    await runFollowupQuestionTest();
-    
-  } catch (error) {
-    console.error('テスト実行中にエラーが発生しました:', error);
-    if (error.stack) {
-      console.error('スタックトレース:', error.stack);
-    }
-  } finally {
-    await cleanup();
-  }
-}
-
 // ファイル編集テスト
 async function runFileEditTest() {
   console.log('\n===== テスト1: ファイル読み込みと編集の連続実行 =====');
@@ -481,9 +459,7 @@ async function runFileEditTest() {
     tools: tools,
     // 各ロールの出力確定時のコールバック
     onToolExecutionCompleted: (toolName, params, result) => {
-      console.log(`\n=== ツール実行完了: ${toolName} ===`);
-      console.log('パラメータ:', JSON.stringify(params, null, 2));
-      console.log('結果:', typeof result.content === 'string' ? result.content : JSON.stringify(result.content, null, 2));
+      // ログ出力を削除
       return Promise.resolve();
     }
   });
@@ -502,15 +478,9 @@ async function runFileEditTest() {
     ts: Date.now()
   });
   
-  console.log('\n=== ユーザーのメッセージを追加しました ===');
-  console.log(`[user]: ${prompt}`);
-  
   // GeminiHandlerを使用してメッセージを送信
   console.log('メッセージ送信と連続ツール実行を開始します...');
   const response = await geminiHandler.sendMessage(prompt, chatHistory);
-  
-  console.log('\n=== 最終応答 ===');
-  console.log('応答:', response.text);
   
   // 会話履歴を表示
   console.log('\n===== 会話履歴 =====');
@@ -527,13 +497,16 @@ async function runFileEditTest() {
     
     // 著者名が更新されているか確認
     const config = JSON.parse(configContent);
-    if (config.author === 'システム管理者') {
+    const isSuccess = config.author === 'システム管理者';
+    if (isSuccess) {
       console.log('✅ 成功: 著者名が正しく更新されています');
     } else {
       console.log(`❌ 失敗: 著者名が更新されていません (${config.author})`);
     }
+    return isSuccess;
   } catch (error) {
     console.error('config.jsonの読み込みエラー:', error);
+    return false;
   }
 }
 
@@ -556,10 +529,7 @@ async function runFollowupQuestionTest() {
     tools: tools,
     // 各ロールの出力確定時のコールバック
     onToolExecutionCompleted: (toolName, params, result) => {
-      console.log(`\n=== ツール実行完了: ${toolName} ===`);
-      console.log('パラメータ:', JSON.stringify(params, null, 2));
-      console.log('結果:', typeof result.content === 'string' ? result.content : JSON.stringify(result.content, null, 2));
-      
+      // ログ出力を削除
       return Promise.resolve();
     }
   });
@@ -575,9 +545,6 @@ async function runFollowupQuestionTest() {
     content: prompt,
     ts: Date.now()
   });
-  
-  console.log('\n=== ユーザーのメッセージを追加しました ===');
-  console.log(`[user]: ${prompt}`);
   
   // GeminiHandlerを使用してメッセージを送信
   console.log('メッセージ送信と連続ツール実行を開始します...');
@@ -602,12 +569,10 @@ async function runFollowupQuestionTest() {
         }
       }
     });
-    
-    console.log('\n=== 最終応答 ===');
-    console.log('応答:', response.text);
   } catch (error) {
     console.log('\n=== 処理が中断されました ===');
     console.log(`理由: ${error.message}`);
+    return false;
   }
   
   // 会話履歴を表示
@@ -627,11 +592,13 @@ async function runFollowupQuestionTest() {
     try {
       const config = JSON.parse(configContent);
       // 説明が更新されているか確認
-      if (config.description === 'テスト用更新アプリケーション') {
+      const isSuccess = config.description === 'テスト用更新アプリケーション';
+      if (isSuccess) {
         console.log('✅ 成功: 説明が正しく更新されています');
       } else {
         console.log(`❌ 失敗: 説明が更新されていません (${config.description})`);
       }
+      return isSuccess;
     } catch (parseError) {
       console.error('JSONパースエラー:', parseError.message);
       
@@ -646,14 +613,44 @@ async function runFollowupQuestionTest() {
       
       // 修正したJSONをパース
       const fixedConfig = JSON.parse(fixedContent);
-      if (fixedConfig.description === 'テスト用更新アプリケーション') {
+      const isSuccess = fixedConfig.description === 'テスト用更新アプリケーション';
+      if (isSuccess) {
         console.log('✅ 成功: 説明が正しく更新されています（修正後）');
       } else {
         console.log(`❌ 失敗: 説明が更新されていません (${fixedConfig.description})`);
       }
+      return isSuccess;
     }
   } catch (error) {
     console.error('config.jsonの読み込みエラー:', error);
+    return false;
+  }
+}
+
+// 連続ツール実行をシミュレートするテスト関数
+async function runSequentialToolExecutionTest() {
+  let fileEditTestSuccess = false;
+  let followupQuestionTestSuccess = false;
+  
+  try {
+    await setup();
+    console.log('\n===== 連続ツール実行テスト開始 =====');
+    
+    // テスト1: ファイル読み込みと編集の連続実行
+    fileEditTestSuccess = await runFileEditTest();
+    
+    // テスト2: フォローアップ質問の連続実行
+    followupQuestionTestSuccess = await runFollowupQuestionTest();
+    
+    return fileEditTestSuccess && followupQuestionTestSuccess;
+  } catch (error) {
+    console.error('テスト実行中にエラーが発生しました:', error);
+    if (error.stack) {
+      console.error('スタックトレース:', error.stack);
+    }
+    return false;
+  } finally {
+    await cleanup();
   }
 }
 
@@ -699,7 +696,8 @@ async function main() {
     console.log(`タスクIDごとのメッセージ管理と更新機能テスト: ${taskMessagesSuccess ? '成功' : '失敗'}\n`);
     
     // 6. 連続ツール実行のテスト
-    await runSequentialToolExecutionTest();
+    const sequentialToolSuccess = await runSequentialToolExecutionTest();
+    console.log(`連続ツール実行テスト: ${sequentialToolSuccess ? '成功' : '失敗'}\n`);
     
     console.log('=== すべてのテストが完了しました ===');
     
@@ -721,11 +719,11 @@ async function main() {
 - 履歴クリア: ${taskMessagesSuccess ? '正常に履歴をクリア可能' : '失敗'}
 
 4. 連続ツール実行
-- ファイル読み込みと編集: テスト1で正常に動作
-- フォローアップ質問: テスト2で正常に動作
-- 複数ツールの連携: 複数のツールが順番に連携して実行可能
+- ファイル読み込みと編集: ${sequentialToolSuccess ? '正常に動作' : '失敗'}
+- フォローアップ質問: ${sequentialToolSuccess ? '正常に動作' : '失敗'}
+- 複数ツールの連携: ${sequentialToolSuccess ? '複数のツールが順番に連携して実行可能' : '連続実行に問題あり'}
 
-総合評価: ${contextHelperSuccess && autoTruncateSuccess && taskMessagesSuccess ? 
+総合評価: ${contextHelperSuccess && autoTruncateSuccess && taskMessagesSuccess && sequentialToolSuccess ? 
   'すべての機能が正常に動作。情報量と精度のバランスを取りながら、必要な情報を効率的に抽出し、連続的なツール実行が可能な仕組みが実現できています。また、長い会話履歴も適切に管理されます。' : 
   '一部の機能に問題があります。詳細なログを確認してください。'}
 `);
